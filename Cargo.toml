@@ -1,0 +1,18 @@
+[package]
+name = "hash"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cuckoofilter = "0.5.0"
+fastbloom = "0.14.0"
+fxhash = "0.2.1"
+hashbrown = "0.16.0"
+mem_dbg = "0.3.0"
+memsize = "0.1.4"
+rand = "0.9.2"
+rustc-hash = "2.1.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sux = "0.8.0"
+wide = "0.7.33"
