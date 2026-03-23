@@ -1,4 +1,6 @@
 use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+use std::array::from_fn;
+use std::cmp::Reverse;
 use std::hash::{BuildHasher, BuildHasherDefault};
 use std::hint::select_unpredictable;
 use std::mem::transmute;
@@ -10,32 +12,43 @@ use wide::CmpEq;
 use super::{to_bin, to_part, T};
 
 pub struct Kphf {
-    pub slot_ratio: f32,
-    pub meta_ratio: f32,
+    /// Fill ratio
+    pub alpha: f32,
+    /// Bits per key
+    pub bits_per_key: f32,
+    /// Number of keys per bin.
     k: usize,
     s: usize,
+    /// Number of keys.
     n: usize,
+    /// Number of bins.
     b: usize,
+    /// Metadata bits.
     m: usize,
+    /// Number of buckets.
     p: usize,
+    /// Actual seeds data.
     seeds: Vec<u8>,
 }
 
-const BIN_SIZE: usize = 16;
+const BIN_SIZE: usize = 4;
 const PADDING: usize = 100;
 
 impl Kphf {
-    pub fn new(slot_ratio: f32, meta_ratio: f32, keys: &[T], sort: bool, consensus: bool) -> Self {
+    pub fn new(alpha: f32, bits_per_key: f32, keys: &[T], sort: bool, consensus: bool) -> Self {
         // eprintln!("building..");
         let k = BIN_SIZE;
+        // bits per bucket
         let s = 8;
         let n = keys.len();
         // bins
-        let b = ((n as f32 * slot_ratio) as usize).div_ceil(k);
-        // total metadata bits
-        let m = ((n * 64) as f32 * meta_ratio) as usize;
-        // bits per part
+        let b = ((n as f32 / alpha) as usize).div_ceil(k);
+        // target metadata bits
+        let m = (n as f32 * bits_per_key) as usize;
+        // #buckets
         let p = m.div_ceil(s.max(1));
+        // total bits
+        let bits = s * p;
 
         // 1. sort the keys
         let mut keys = keys.to_vec();
@@ -75,11 +88,18 @@ impl Kphf {
         // eprintln!("find seeds..");
         let mut elems_done = 0;
         let mut i = 0;
+
+        let mut lg: [f64; BIN_SIZE + 1] = from_fn(|i| (i as f64).log2());
+        lg[0] = f64::MIN;
+
         while i < p {
             let idx = perm[i];
             let start = part_starts[idx];
             let end = part_starts[idx + 1];
             let len = end - start;
+            // if i % 1024 == 0 {
+            //     eprintln!("bucket {i} of {p} len {len}");
+            // }
 
             assert_eq!(
                 elems_done,
@@ -97,30 +117,47 @@ impl Kphf {
             let part = &keys[start..end];
 
             // score function
-            fn pow(pow: u32) -> impl Fn(&[usize]) -> usize {
+            fn pow(pow: u32) -> impl Fn(&[usize]) -> i64 {
                 move |c: &[usize]| {
                     c.iter()
                         .enumerate()
                         .map(|(size, cnt)| cnt * size.pow(pow))
-                        .sum::<usize>()
+                        .sum::<usize>() as i64
                 }
             }
+            // New candidate score function:
+            // Maximize the product of the number of empty slots in each bin.
+            // eprintln!("lg: {:?}", &lg);
+            // eprintln!("lg: {}", lg[0] * 2. + 1.0);
+            let maybe_optimal = |counts: &[usize]| -> i64 {
+                if counts[BIN_SIZE] > 0 {
+                    return i64::MAX;
+                }
+                let q = counts
+                    .iter()
+                    .enumerate()
+                    .map(|(size, &cnt)| cnt as f64 * lg[BIN_SIZE - size])
+                    .sum::<f64>();
+                // eprintln!("counts {counts:?} score: {q}");
+                (-q) as i64
+            };
             let f = pow(7);
+            // let f = maybe_optimal;
 
             // hash all keys with two seeds, and collect bin size statistics
-            let mut vals = vec![(usize::MAX, usize::MAX, usize::MAX)];
+            let mut vals = vec![(usize::MAX, i64::MAX, usize::MAX)];
 
             let seed_offset = if consensus {
                 u64::from_be_bytes(seeds[i..i + 8].try_into().unwrap())
             } else {
                 0
             };
-            eprintln!(
-                "Part {i:>9} len {len:>7} tries {:>3} elems_done {:>7.4}%  full_bins {:>7.4}%",
-                tries[i],
-                elems_done as f32 / n as f32 * 100.0,
-                num_full as f32 / b as f32 * 100.0
-            );
+            // eprintln!(
+            //     "Part {i:>9} len {len:>7} tries {:>3} elems_done {:>7.4}%  full_bins {:>7.4}%",
+            //     tries[i],
+            //     elems_done as f32 / n as f32 * 100.0,
+            //     num_full as f32 / b as f32 * 100.0
+            // );
             // eprintln!("read {i}..={} => {seed_offset:>0x}", i + 7);
             assert!(
                 seed_offset % 256 == 0,
@@ -137,21 +174,21 @@ impl Kphf {
                     bin_sizes[bi] += 1;
                 }
                 let score = f(&counts);
-                vals.push((counts[k], score, seed));
+                vals.push((counts[BIN_SIZE], score, seed));
                 for &key in part {
                     let bi = to_bin(key, seed_offset + seed as u64, b);
                     bin_sizes[bi] -= 1;
                 }
             }
-            vals.sort();
+            vals.sort_by(|x, y| x.partial_cmp(y).unwrap());
             let best = vals[tries[i] as usize];
             if consensus && best.0 > 0 {
                 elems_done -= len;
                 backtracks += 1;
-                eprintln!(
-                    "BACKTRACK part {i} len {len} trie {} collisions {} for {:?} while best is {:?}",
-                    tries[i], best.0, best, vals[0]
-                );
+                // eprintln!(
+                //     "BACKTRACK part {i} len {len} trie {} collisions {} for {:?} while best is {:?}",
+                //     tries[i], best.0, best, vals[0]
+                // );
                 // Backtrack 1 step.
                 tries[i] = 0;
                 if i > 0 {
@@ -164,7 +201,7 @@ impl Kphf {
                     let len = end - start;
                     elems_done -= len;
                     let part = &keys[start..end];
-                    eprintln!("Unset part {} len {len}", idx - 1);
+                    // eprintln!("Unset part {} len {len}", idx - 1);
 
                     // eprintln!("read {}..={} to empty parent bucket", i - 1, i + 6);
                     let seed = u64::from_be_bytes(seeds[i - 1..i + 7].try_into().unwrap());
@@ -231,13 +268,13 @@ impl Kphf {
         // }
 
         eprintln!(
-            "slot_ratio: {slot_ratio:>4.2}, meta_ratio: {meta_ratio:<6}, sort: {sort:>5}, consensus: {consensus:>5}, bits/key: {:.4} Collisions: {:>7} BTs {backtracks:>7}",
+            "alpha: {alpha:>4.2}, bits/key: {bits_per_key:<6}, sort: {sort:>5}, consensus: {consensus:>5}, bits/key: {:.4} Collisions: {:>7} BTs {backtracks:>7}",
             (m as f32) / (n as f32),
             num_collisions
         );
         Self {
-            slot_ratio,
-            meta_ratio,
+            alpha,
+            bits_per_key,
             k,
             s,
             n,
@@ -250,17 +287,15 @@ impl Kphf {
 }
 
 pub fn test() {
-    let n = 3_000_000;
+    let n = 1_000_000;
     let mut keys = vec![0u32; n];
     rand::fill(&mut keys[..]);
 
-    for slot_ratio in [1.25] {
-        for (sort, cons) in [(true, false), (false, false), (false, true)] {
-            for meta_ratio in [0.0005] {
-                // for slot_ratio in [1.3, 1.25, 1.2] {
-                //     for meta_ratio in [0.002, 0.001, 0.0005] {
-                //         for (sort, cons) in [(true, false), (false, false), (false, true)] {
-                let kphf = Kphf::new(slot_ratio, meta_ratio, &keys, sort, cons);
+    for alpha in [0.95] {
+        // for (sort, cons) in [(true, false), (false, false), (false, true)] {
+        for (sort, cons) in [(false, true)] {
+            for bits_per_key in [2.0, 1.5, 1.0, 0.75, 0.5] {
+                let kphf = Kphf::new(alpha, bits_per_key, &keys, sort, cons);
             }
         }
     }
