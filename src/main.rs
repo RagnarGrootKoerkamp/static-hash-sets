@@ -1,5 +1,5 @@
 #![allow(unused)]
-#![feature(bigint_helper_methods, impl_trait_in_assoc_type)]
+#![feature(impl_trait_in_assoc_type, widening_mul)]
 
 mod hashset;
 mod kphf;
@@ -156,8 +156,8 @@ fn test(n: usize, p: usize, k: usize, b: usize, s: usize) {
 }
 
 fn main() {
-    // kphf::test();
-    // return;
+    kphf::test();
+    return;
 
     let ns = (0..)
         .map(|i| (1_000_000. * 1.35f32.powi(i)) as usize)
