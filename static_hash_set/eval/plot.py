@@ -5,7 +5,7 @@ import seaborn as sns
 import pandas as pd
 import json
 
-with open("data/1.json") as f:
+with open("out.json") as f:
     data = pd.DataFrame(json.load(f))
 data["h"] = data["h"].astype(str) + data["pf"].map({True: " (+pf)", False: ""})
 
@@ -15,7 +15,9 @@ plt.close()
 # plt.plot(data["n"], data["build"], label="Build", c="black", lw=0.6)
 sns.lineplot(data=data, x="n", y="build", hue="h", lw=0.6)
 sns.lineplot(data=data, x="n", y="q01", hue="h", ls="--", lw=1.0)
-# sns.lineplot(data=data, x="n", y="q50", hue="h", lw=1.25)
+sns.lineplot(data=data, x="n", y="q10", hue="h", lw=1)
+sns.lineplot(data=data, x="n", y="q50", hue="h", lw=1)
+sns.lineplot(data=data, x="n", y="q90", hue="h", lw=1)
 sns.lineplot(data=data, x="n", y="q99", hue="h", lw=1)
 plt.xlabel("n")
 plt.ylabel("ns / element")
@@ -36,4 +38,4 @@ for s, l in zip(sizes, labels):
 plt.text(sizes[-1] / 4, plt.ylim()[0], labels[-1], ha="left", va="bottom", fontsize=16)
 
 plt.gcf().set_size_inches(10, 6)
-plt.savefig("data/plot.png", bbox_inches="tight", dpi=300)
+plt.savefig("plot.png", bbox_inches="tight", dpi=300)

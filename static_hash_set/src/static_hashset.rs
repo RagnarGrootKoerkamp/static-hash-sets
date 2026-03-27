@@ -136,9 +136,9 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
         // 4. init buckets
         let mut table = vec![Bucket([0; BUCKET_SIZE]); b + PADDING].into_boxed_slice();
         let mut seeds = vec![0u8; p];
-        eprintln!();
-        eprintln!("Size of table: {}", std::mem::size_of_val(&*table));
-        eprintln!("Size of seeds: {}", std::mem::size_of_val(&*seeds));
+        // eprintln!();
+        // eprintln!("Size of table: {}", std::mem::size_of_val(&*table));
+        // eprintln!("Size of seeds: {}", std::mem::size_of_val(&*seeds));
 
         let mut bucket_sizes = vec![0u8; b];
         let mut collisions = vec![];
