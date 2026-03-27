@@ -1,4 +1,9 @@
-#![feature(impl_trait_in_assoc_type, widening_mul, adt_const_params, generic_const_exprs)]
+#![feature(
+    impl_trait_in_assoc_type,
+    widening_mul,
+    adt_const_params,
+    generic_const_exprs
+)]
 
 pub trait KphfT {
     fn name(&self) -> &'static str;
@@ -75,7 +80,10 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             .1
     }
 
-    pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
+    pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self>
+    where
+        [(); K + 1]:,
+    {
         let n = keys.len();
         // bins
         let num_bins = ((n as f32 / alpha) as usize).div_ceil(K);
@@ -96,7 +104,10 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         kphf.build(keys).map(|_| kphf)
     }
 
-    fn build<T: Key>(&mut self, keys: &[T]) -> Option<()> {
+    fn build<T: Key>(&mut self, keys: &[T]) -> Option<()>
+    where
+        [(); K + 1]:,
+    {
         let start = std::time::Instant::now();
         let sort = matches!(MODE, Mode::Sort | Mode::SortBump);
         let consensus = matches!(MODE, Mode::Consensus);
@@ -137,6 +148,9 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         let mut backtracks = 0;
         let mut i = 0;
 
+        let mut lg: [f64; K + 1] = std::array::from_fn(|i| (i as f64).log2());
+        lg[0] = f64::MIN;
+
         let mut bumped_keys: Vec<T> = vec![];
 
         while i < self.num_buckets {
@@ -159,14 +173,15 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             }
             // New candidate score function:
             // Maximize the product of the number of empty slots in each bin.
+            #[allow(unused)]
             let maybe_optimal = |counts: &[usize]| -> i64 {
-                if counts[BIN_SIZE] > 0 {
+                if counts[K] > 0 {
                     return i64::MAX;
                 }
                 let q = counts
                     .iter()
                     .enumerate()
-                    .map(|(size, &cnt)| cnt as f64 * lg[BIN_SIZE - size])
+                    .map(|(size, &cnt)| cnt as f64 * lg[K - size])
                     .sum::<f64>();
                 (-q) as i64
             };
@@ -260,14 +275,14 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         }
 
         let duration = start.elapsed();
-        eprintln!(
-            "alpha: {:>4.2}, bits/key: {:<6}, mode: {:>27} BTs {backtracks:>7} Bumped {bumped:>7} ({:.4}%) {:>6?}ms",
-            self.alpha,
-            self.bits_per_key,
-            format!("{MODE:?}"),
-            bumped as f32 / n as f32 * 100.0,
-            duration.as_millis()
-        );
+        // eprintln!(
+        //     "alpha: {:>4.2}, bits/key: {:<6}, mode: {:>27} BTs {backtracks:>7} Bumped {bumped:>7} ({:.4}%) {:>6?}ms",
+        //     self.alpha,
+        //     self.bits_per_key,
+        //     format!("{MODE:?}"),
+        //     bumped as f32 / n as f32 * 100.0,
+        //     duration.as_millis()
+        // );
 
         self.seeds = seeds;
         if bumped > 0 {
@@ -284,6 +299,14 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
     pub fn bins(&self) -> usize {
         self.num_bins + self.bumped.as_ref().map_or(0, |b| b.bins())
+    }
+
+    pub fn bits_used(&self) -> usize {
+        self.seeds.len() * 8 + self.bumped.as_ref().map_or(0, |b| b.bits_used())
+    }
+
+    pub fn num_bumped(&self) -> usize {
+        self.bumped.as_ref().map_or(0, |b| b.n)
     }
 
     pub fn get<T: Key>(&self, key: T) -> usize {
@@ -304,7 +327,10 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 #[cfg(test)]
 mod test {
     use super::*;
-    fn test_config<const MODE: Mode, const K: usize>(keys: &[u32], alpha: f32, bits_per_key: f32) {
+    fn test_config<const MODE: Mode, const K: usize>(keys: &[u32], alpha: f32, bits_per_key: f32)
+    where
+        [(); K + 1]:,
+    {
         let Some(kphf) = KptrHash::<MODE, K>::new(alpha, bits_per_key, keys) else {
             return;
         };
