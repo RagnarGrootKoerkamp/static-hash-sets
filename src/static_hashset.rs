@@ -15,7 +15,7 @@ type S = wide::i32x8;
 use rustc_hash::FxHashMap;
 use wide::CmpEq;
 
-use super::{to_bin, to_part, T};
+use super::T;
 
 pub struct StaticHashSet<const PROBE: bool> {
     pub slot_ratio: f32,
@@ -42,6 +42,38 @@ pub struct StaticHashSet<const PROBE: bool> {
 const PADDING: usize = 100;
 
 const BUCKET_SIZE: usize = 16;
+
+fn mul(a: usize, b: usize) -> usize {
+    a.widening_mul(b).1
+}
+
+fn to_part(key: T, p: usize, k: usize) -> usize {
+    let x = fxhash::hash64(&(key ^ 13245)) as usize;
+    // first, replace x by 1-(1-x)^2 = 2x - x^2
+    // let x = (2*x).wrapping_sub(mul(x, x));
+
+    // quadratic: x^2
+    let sq = mul(x, x);
+    // qubic: (x^2 + x^3)/2
+    let cube = mul(sq, x);
+    let c = sq / 2 + cube / 2;
+    // quartic: x^4/3 + x^3/6 + x^2/2
+    let quart = mul(sq, sq);
+    let q = quart / 3 + cube / 6 + sq / 2;
+
+    // x**6
+    let six = mul(quart, sq);
+    let oct = mul(quart, quart);
+
+    // c.widening_mul(p).1
+    six.widening_mul(p).1
+}
+
+fn to_bin(key: T, seed: u64, b: usize) -> usize {
+    (fxhash::hash64(&(key ^ seed as T)) as usize)
+        .widening_mul(b)
+        .1
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(align(64))] // Cache line alignment

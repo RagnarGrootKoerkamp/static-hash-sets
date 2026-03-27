@@ -1,8 +1,9 @@
 use fxhash::{FxBuildHasher, FxHashSet, FxHasher};
 use hashbrown::DefaultHashBuilder;
 use rand::seq::IndexedRandom;
+use sux::dict::EliasFanoBuilder;
 
-use crate::{hashset::U64HashSet, static_hashset::StaticHashSet};
+use crate::{static_hashset::StaticHashSet, u64_hashset::U64HashSet};
 
 pub trait HashSet {
     fn name(&self) -> &'static str;
