@@ -34,15 +34,31 @@ pub struct Kphf {
 const BIN_SIZE: usize = 8;
 const PADDING: usize = 100;
 
+#[derive(Debug)]
+pub enum Mode {
+    /// Process buckets left to right
+    Linear,
+    /// Process buckets left to right, and allow bumping
+    LinearBump,
+    /// Process buckets left to right, and allow smooth bumping.
+    LinearSmoothBump,
+    /// Process buckets large to small
+    Sort,
+    /// Process buckets large to small, and allow bumping
+    SortBump,
+    /// Process buckets left to right, and backtrack
+    Consensus,
+}
+
 impl Kphf {
-    pub fn new(
-        alpha: f32,
-        bits_per_key: f32,
-        keys: &[T],
-        sort: bool,
-        consensus: bool,
-        bump: bool,
-    ) -> Self {
+    pub fn new(alpha: f32, bits_per_key: f32, keys: &[T], mode: Mode) -> Self {
+        let sort = matches!(mode, Mode::Sort | Mode::SortBump);
+        let consensus = matches!(mode, Mode::Consensus);
+        let bump = matches!(
+            mode,
+            Mode::LinearBump | Mode::LinearSmoothBump | Mode::SortBump
+        );
+
         // eprintln!("building..");
         let k = BIN_SIZE;
         // bits per bucket
@@ -76,10 +92,6 @@ impl Kphf {
 
         // 3. Sort parts by decreasing size
         let mut perm = (0..p).collect::<Vec<_>>();
-
-        if consensus {
-            assert!(!sort);
-        }
 
         if sort {
             perm.sort_by_key(|&i| std::cmp::Reverse(part_sizes[i]));
@@ -289,7 +301,7 @@ impl Kphf {
         // }
 
         eprintln!(
-            "alpha: {alpha:>4.2}, bits/key: {bits_per_key:<6}, sort: {sort:>5}, consensus: {consensus:>5}, bits/key: {:.4} Collisions: {:>7} BTs {backtracks:>7} Bumped {bumped:>7}",
+            "alpha: {alpha:>4.2}, bits/key: {bits_per_key:<6}, mode: {mode:?}, bits/key: {:.4} Collisions: {:>7} BTs {backtracks:>7} Bumped {bumped:>7}",
             (m as f32) / (n as f32),
             num_collisions
         );
@@ -313,10 +325,9 @@ pub fn test() {
     rand::fill(&mut keys[..]);
 
     for alpha in [0.90] {
-        // for (sort, cons) in [(true, false), (false, false), (false, true)] {
         for bits_per_key in [0.3, 0.275, 0.25, 0.225] {
-            for (sort, cons, bump) in [(true, false, true), (false, true, false)] {
-                let kphf = Kphf::new(alpha, bits_per_key, &keys, sort, cons, bump);
+            for mode in [Mode::SortBump, Mode::Consensus] {
+                let kphf = Kphf::new(alpha, bits_per_key, &keys, mode);
             }
         }
     }
