@@ -49,7 +49,7 @@ where
     [(); K + 1]:,
 {
     println!("mode,k,n,alpha,lb,factor,bits_per_key,actual_bpk,pct_bumped,build_ns,throughput_ns,latency_ns");
-    for &n in &[100_000usize, 1_000_000, 10_000_000] {
+    for &n in &[3_000_000] {
         let keys = gen_keys(n);
         for &alpha in &[0.8, 0.9, 0.95, 0.98, 0.99] {
             let lb = space_lower_bound(K, alpha);
@@ -107,13 +107,13 @@ fn main() {
     // bench::<{ Mode::Sort }, 4>();
     // bench::<{ Mode::SortBump }, 4>();
 
-    bench::<{ Mode::Linear }, 8>();
+    bench::<{ Mode::SortBump }, 8>();
     bench::<{ Mode::LinearBump }, 8>();
     bench::<{ Mode::Sort }, 8>();
-    bench::<{ Mode::SortBump }, 8>();
+    bench::<{ Mode::Linear }, 8>();
 
-    bench::<{ Mode::Linear }, 16>();
+    bench::<{ Mode::SortBump }, 16>();
     bench::<{ Mode::LinearBump }, 16>();
     bench::<{ Mode::Sort }, 16>();
-    bench::<{ Mode::SortBump }, 16>();
+    bench::<{ Mode::Linear }, 16>();
 }
