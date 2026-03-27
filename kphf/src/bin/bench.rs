@@ -53,7 +53,9 @@ where
         let keys = gen_keys(n);
         for &alpha in &[0.8, 0.9, 0.95, 0.98, 0.99] {
             let lb = space_lower_bound(K, alpha);
-            for &factor in &[5.0, 4.0, 3.0, 2.5, 2.0, 1.75, 1.5] {
+            for &factor in &[
+                5.0, 4.0, 3.0, 2.5, 2.0, 1.75, 1.5, 1.4, 1.3, 1.25, 1.2, 1.15,
+            ] {
                 let bits_per_key = lb * factor;
 
                 // Construction
@@ -106,14 +108,17 @@ fn main() {
     // bench::<{ Mode::LinearBump }, 4>();
     // bench::<{ Mode::Sort }, 4>();
     // bench::<{ Mode::SortBump }, 4>();
+    // bench::<{ Mode::Consensus }, 4>();
 
     bench::<{ Mode::SortBump }, 8>();
     bench::<{ Mode::LinearBump }, 8>();
     bench::<{ Mode::Sort }, 8>();
     bench::<{ Mode::Linear }, 8>();
+    bench::<{ Mode::Consensus }, 8>();
 
     bench::<{ Mode::SortBump }, 16>();
     bench::<{ Mode::LinearBump }, 16>();
     bench::<{ Mode::Sort }, 16>();
     bench::<{ Mode::Linear }, 16>();
+    bench::<{ Mode::Consensus }, 16>();
 }

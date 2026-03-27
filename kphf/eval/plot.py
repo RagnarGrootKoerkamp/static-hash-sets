@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 import numpy as np
 
-df = pd.read_csv("out.csv")
+df = pd.read_csv("out2.csv")
 df = df[df["actual_bpk"] != "actual_bpk"]  # drop duplicate header rows
 numeric_cols = [
     "k",
@@ -26,17 +26,25 @@ numeric_cols = [
     "lb",
     "bits_per_key",
     "actual_bpk",
+    "pct_bumped",
     "build_ns",
     "throughput_ns",
     "latency_ns",
 ]
 df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric)
 df = df[df["actual_bpk"] > 0]  # drop failed builds
-df = df[df["n"] == 10_000_000]  # only largest n
+df = df[df["n"] == 3_000_000]  # only largest n
+df = df[df["alpha"] <= 0.98]
 
 # Average over different n values for the same (mode, k, alpha, bits_per_key)
 df = df.groupby(["mode", "k", "alpha", "bits_per_key"], as_index=False).agg(
-    {"actual_bpk": "mean", "build_ns": "mean", "throughput_ns": "mean", "lb": "first"}
+    {
+        "actual_bpk": "mean",
+        "build_ns": "mean",
+        "throughput_ns": "mean",
+        "pct_bumped": "mean",
+        "lb": "first",
+    }
 )
 
 modes = sorted(df["mode"].unique())
@@ -48,87 +56,83 @@ lw = lambda a: lw_min + (lw_max - lw_min) * (a - alpha_vals[0]) / (
     alpha_vals[-1] - alpha_vals[0]
 )
 
-k_vals = [8, 16]
-fig, axes = plt.subplots(1, len(k_vals), figsize=(14, 5))
+k_vals = sorted(df["k"].unique())
+metrics = [
+    ("build_ns", "build time (ns/key)"),
+    ("throughput_ns", "query throughput (ns/key)"),
+    ("pct_bumped", "% bumped keys"),
+]
+ncols = len(metrics)
+nrows = len(k_vals)
+fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False)
 
-for ax_build, k in zip(axes, k_vals):
-    ax_query = ax_build.twinx()
+for row, k in enumerate(k_vals):
     subset = df[df["k"] == k]
 
-    if subset.empty:
-        ax_build.set_title(f"k={k} (no data)")
-        ax_build.set_visible(False)
-        ax_query.set_visible(False)
-        continue
+    for col, (metric, ylabel) in enumerate(metrics):
+        ax = axes[row][col]
 
-    for mode in modes:
+        if subset.empty:
+            ax.set_title(f"k={k} (no data)")
+            ax.set_visible(False)
+            continue
+
+        for mode in modes:
+            for alpha in alpha_vals:
+                grp = subset[(subset["mode"] == mode) & (subset["alpha"] == alpha)]
+                if grp.empty:
+                    continue
+                ax.plot(
+                    grp["actual_bpk"], grp[metric], color=colors[mode], lw=lw(alpha)
+                )
+
+        # Lower bound verticals
         for alpha in alpha_vals:
-            grp = subset[(subset["mode"] == mode) & (subset["alpha"] == alpha)]
+            grp = subset[subset["alpha"] == alpha]
             if grp.empty:
                 continue
-            grp = grp.sort_values("actual_bpk")
-            w = lw(alpha)
-            c = colors[mode]
-            ax_build.plot(grp["actual_bpk"], grp["build_ns"], color=c, lw=w, ls="-")
-            ax_query.plot(
-                grp["actual_bpk"], grp["throughput_ns"], color=c, lw=w, ls="--"
+            ax.axvline(grp["lb"].iloc[0], color="black", lw=lw(alpha), ls=":")
+
+        ax.set_xlabel("bits per key")
+        ax.set_ylabel(ylabel)
+        ax.set_xscale("log")
+        ax.set_ylim(bottom=0)
+        ax.set_title(f"k={k} — {ylabel}")
+
+        # Lower bound values and their alphas, sorted by lb
+        lb_alpha = subset.groupby("alpha")["lb"].first().reset_index().sort_values("lb")
+        lb_vals = lb_alpha["lb"].tolist()
+        lb_alphas = lb_alpha["alpha"].tolist()
+
+        # Bottom axis: pow2 ticks (labeled) + lb ticks (unlabeled)
+        xmin, xmax = ax.get_xlim()
+        i_min = int(np.floor(np.log2(xmin)))
+        i_max = int(np.ceil(np.log2(xmax)))
+        pow2_ticks = [2.0**i for i in range(i_min, i_max + 1) if xmin <= 2.0**i <= xmax]
+        pow2_set = set(pow2_ticks)
+        all_ticks = sorted(pow2_set | set(lb_vals))
+        ax.set_xticks(all_ticks)
+        ax.set_xticklabels([f"{t:g}" if t in pow2_set else "" for t in all_ticks])
+
+        # Top axis: alpha labels at lb positions
+        ax_top = ax.twiny()
+        ax_top.set_xscale("log")
+        ax_top.set_xlim(ax.get_xlim())
+        ax_top.set_xticks(lb_vals)
+        ax_top.set_xticklabels([f"α={a:.2g}" for a in lb_alphas], fontsize=7)
+
+        # Legend (only on first column)
+        if col == 0:
+            algo_handles = [
+                mlines.Line2D([], [], color=colors[m], lw=2, label=m) for m in modes
+            ]
+            lb_handle = mlines.Line2D(
+                [], [], color="black", lw=1.5, ls=":", label="lower bound"
             )
-
-    # Lower bound: vertical dotted lines per alpha in black
-    for alpha in alpha_vals:
-        grp = subset[subset["alpha"] == alpha]
-        if grp.empty:
-            continue
-        lb_val = grp["lb"].iloc[0]
-        ax_build.axvline(lb_val, color="black", lw=lw(alpha), ls=":")
-
-    ax_build.set_xlabel("bits per key")
-    ax_build.set_ylabel("build time (ns/key)")
-    ax_query.set_ylabel("query throughput (ns/key)")
-    ax_build.set_xscale("log")
-    ax_build.set_ylim(bottom=0)
-    ax_query.set_ylim(bottom=0)
-    ax_build.set_title(f"k={k}")
-
-    # Lower bound values and their alphas, sorted by lb
-    lb_alpha = (
-        subset.groupby("alpha")["lb"].first().reset_index().sort_values("lb")
-    )
-    lb_vals = lb_alpha["lb"].tolist()
-    lb_alphas = lb_alpha["alpha"].tolist()
-
-    # Powers-of-2 ticks within current x range
-    xmin, xmax = ax_build.get_xlim()
-    i_min = int(np.floor(np.log2(xmin)))
-    i_max = int(np.ceil(np.log2(xmax)))
-    pow2_ticks = [2.0**i for i in range(i_min, i_max + 1) if xmin <= 2.0**i <= xmax]
-
-    # Bottom axis: pow2 ticks (labeled) + lb ticks (tick mark, no label)
-    pow2_set = set(pow2_ticks)
-    all_ticks = sorted(pow2_set | set(lb_vals))
-    ax_build.set_xticks(all_ticks)
-    ax_build.set_xticklabels([f"{t:g}" if t in pow2_set else "" for t in all_ticks])
-
-    # Top axis: alpha labels at lb positions
-    ax_top = ax_build.twiny()
-    ax_top.set_xscale("log")
-    ax_top.set_xlim(ax_build.get_xlim())
-    ax_top.set_xticks(lb_vals)
-    ax_top.set_xticklabels([f"α={a:.2g}" for a in lb_alphas], fontsize=7)
-
-    # Legend
-    algo_handles = [
-        mlines.Line2D([], [], color=colors[m], lw=2, label=m) for m in modes
-    ]
-    style_handles = [
-        mlines.Line2D([], [], color="gray", lw=1.5, ls="-", label="build time"),
-        mlines.Line2D([], [], color="gray", lw=1.5, ls="--", label="query throughput"),
-        mlines.Line2D([], [], color="black", lw=1.5, ls=":", label="lower bound"),
-    ]
-    ax_build.legend(handles=algo_handles + style_handles, fontsize=7, loc="upper left")
+            ax.legend(handles=algo_handles + [lb_handle], fontsize=7, loc="upper left")
 
 plt.suptitle("KptrHash: build time and query throughput vs. space")
 plt.tight_layout()
-plt.savefig("plot.pdf", bbox_inches="tight")
+# plt.savefig("plot.pdf", bbox_inches="tight")
 plt.savefig("plot.png", dpi=150, bbox_inches="tight")
-print("Saved plot.pdf and plot.png")
+# print("Saved plot.pdf and plot.png")

@@ -221,6 +221,12 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             let best = vals[tries[i] as usize];
             if consensus && best.0 > 0 {
                 backtracks += 1;
+
+                if backtracks > n as u32 {
+                    // Too many backtracks, give up.
+                    return None;
+                }
+
                 // Backtrack 1 step.
                 tries[i] = 0;
                 if i > 0 {
