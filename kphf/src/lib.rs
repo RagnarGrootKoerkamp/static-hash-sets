@@ -65,12 +65,14 @@ pub struct KptrHash {
     p: usize,
     /// Actual seeds data.
     seeds: Vec<u8>,
+    /// Bump structure
+    bumped: Option<Box<Self>>,
 }
 
 const BIN_SIZE: usize = 8;
 const PADDING: usize = 100;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Mode {
     /// Process buckets left to right
     Linear,
@@ -197,6 +199,8 @@ impl KptrHash {
         let mut lg: [f64; BIN_SIZE + 1] = from_fn(|i| (i as f64).log2());
         lg[0] = f64::MIN;
 
+        let mut bumped_keys = vec![];
+
         while i < p {
             let idx = perm[i];
             let start = part_starts[idx];
@@ -291,7 +295,7 @@ impl KptrHash {
 
             let mut ok = false;
 
-            for seed in 0..(1 << s) {
+            for seed in 0..(1 << s) - if bump { 1 } else { 0 } {
                 if smoothbump && !smoothbumplazy && seed >= threshold && ok {
                     break;
                 }
@@ -390,8 +394,10 @@ impl KptrHash {
             if bump && best.0 > 0 {
                 elems_done -= part.len();
                 bumped += part.len();
-                collisions.extend(std::iter::repeat_n(0, best.0));
                 i += 1;
+                bumped_keys.extend_from_slice(part);
+                seeds[idx + 7] = 255;
+
                 // eprintln!(
                 //     "{i}: Bump bucket of size {}; total bumped {bumped}",
                 //     part.len()
@@ -409,6 +415,7 @@ impl KptrHash {
             for &key in part {
                 if smoothbump && key > max_key {
                     smoothbumped += 1;
+                    bumped_keys.push(key);
                     continue;
                 }
                 let bi = to_bin(key, seed_offset + seed as u64, b);
@@ -485,7 +492,23 @@ impl KptrHash {
             m,
             p,
             seeds,
+            bumped: if bumped > 0 {
+                Some(Box::new(Self::new(
+                    // use a lazy load factor for fallback
+                    0.5,
+                    // double the bits/key for bumped keys
+                    2.0 * bits_per_key,
+                    &bumped_keys,
+                    mode,
+                )?))
+            } else {
+                None
+            },
         })
+    }
+
+    fn bins(&self) -> usize {
+        self.b + self.bumped.as_ref().map_or(0, |b| b.bins())
     }
 
     fn get(&self, key: T) -> usize {
@@ -494,8 +517,11 @@ impl KptrHash {
             Mode::Consensus => u64::from_be_bytes(self.seeds[part..part + 8].try_into().unwrap()),
             _ => self.seeds[part + 7] as u64,
         };
-        let bi = to_bin(key, seed, self.b);
-        bi
+        if matches!(self.mode, Mode::LinearBump | Mode::SortBump) && seed == 255 {
+            self.b + self.bumped.as_ref().unwrap().get(key)
+        } else {
+            to_bin(key, seed, self.b)
+        }
     }
 }
 
@@ -552,7 +578,7 @@ mod test {
         let Some(kphf) = KptrHash::new(alpha, bits_per_key, &keys, mode) else {
             return;
         };
-        let mut cnt = vec![0; kphf.b];
+        let mut cnt = vec![0; kphf.bins()];
         for key in keys {
             let bi = kphf.get(*key);
             cnt[bi] += 1;
@@ -566,13 +592,13 @@ mod test {
         let keys = gen_keys(n);
 
         for alpha in [0.90] {
-            for bits_per_key in [0.60] {
+            for bits_per_key in [0.40, 0.35, 0.3, 0.25] {
                 for mode in [
                     Mode::Linear,
-                    // Mode::LinearBump,
-                    // Mode::Sort,
-                    // Mode::SortBump,
-                    // Mode::Consensus,
+                    Mode::LinearBump,
+                    Mode::Sort,
+                    Mode::SortBump,
+                    Mode::Consensus,
                 ] {
                     test_config(&keys, alpha, bits_per_key, mode);
                 }
