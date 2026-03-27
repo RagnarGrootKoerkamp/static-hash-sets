@@ -1,3 +1,6 @@
+[workspace]
+members = ["kphf"]
+
 [package]
 name = "hash"
 version = "0.1.0"

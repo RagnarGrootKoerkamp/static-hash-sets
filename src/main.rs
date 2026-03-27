@@ -2,7 +2,6 @@
 #![feature(impl_trait_in_assoc_type, widening_mul)]
 
 mod hashset;
-mod kphf;
 mod static_hashset;
 mod traits;
 
@@ -156,9 +155,6 @@ fn test(n: usize, p: usize, k: usize, b: usize, s: usize) {
 }
 
 fn main() {
-    kphf::test();
-    return;
-
     let ns = (0..)
         .map(|i| (1_000_000. * 1.35f32.powi(i)) as usize)
         .take_while(|x| *x <= 100_000_000)

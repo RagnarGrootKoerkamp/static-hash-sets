@@ -1,17 +1,51 @@
-use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-use std::array::{from_fn, repeat};
-use std::cmp::Reverse;
-use std::hash::{BuildHasher, BuildHasherDefault};
-use std::hint::select_unpredictable;
-use std::mem::transmute;
-type S = wide::i32x8;
+#![feature(impl_trait_in_assoc_type, widening_mul)]
 
-use rustc_hash::FxHashMap;
-use wide::CmpEq;
+pub trait KphfT {
+    fn name(&self) -> &'static str;
+    fn new(&self, keys: &[u32]) -> Self;
+    fn has_prefetch(&self) -> bool {
+        false
+    }
+    fn prefetch(&mut self, _key: u32) {}
+    fn get(&mut self, key: u32) -> usize;
+}
 
-use super::{to_bin, to_part, T};
+use std::array::from_fn;
 
-pub struct Kphf {
+fn mul(a: usize, b: usize) -> usize {
+    a.widening_mul(b).1
+}
+type T = u32;
+
+fn to_part(key: T, p: usize, k: usize) -> usize {
+    let x = fxhash::hash64(&(key ^ 13245)) as usize;
+    // first, replace x by 1-(1-x)^2 = 2x - x^2
+    // let x = (2*x).wrapping_sub(mul(x, x));
+
+    // quadratic: x^2
+    let sq = mul(x, x);
+    // qubic: (x^2 + x^3)/2
+    let cube = mul(sq, x);
+    let c = sq / 2 + cube / 2;
+    // quartic: x^4/3 + x^3/6 + x^2/2
+    let quart = mul(sq, sq);
+    let q = quart / 3 + cube / 6 + sq / 2;
+
+    // x**6
+    let six = mul(quart, sq);
+    let oct = mul(quart, quart);
+
+    // c.widening_mul(p).1
+    six.widening_mul(p).1
+}
+
+fn to_bin(key: T, seed: u64, b: usize) -> usize {
+    (fxhash::hash64(&(key ^ seed as T)) as usize)
+        .widening_mul(b)
+        .1
+}
+
+pub struct KptrHash {
     /// Fill ratio
     pub alpha: f32,
     /// Bits per key
@@ -63,7 +97,7 @@ pub enum Mode {
     Consensus,
 }
 
-impl Kphf {
+impl KptrHash {
     pub fn new(alpha: f32, bits_per_key: f32, keys: &[T], mode: Mode) -> Self {
         let start = std::time::Instant::now();
         let sort = matches!(
@@ -486,7 +520,7 @@ pub fn test() {
                 // Mode::SortSmoothBumpLazy(248),
                 Mode::Consensus,
             ] {
-                let kphf = Kphf::new(alpha, bits_per_key, &keys, mode);
+                let kphf = KptrHash::new(alpha, bits_per_key, &keys, mode);
             }
             eprintln!();
         }

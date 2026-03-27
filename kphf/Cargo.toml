@@ -1,0 +1,13 @@
+[package]
+name = "kphf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fxhash = "0.2.1"
+mem_dbg = "0.3.0"
+memsize = "0.1.4"
+rand = "0.9.2"
+rustc-hash = "2.1.1"
+sux = "0.8.0"
+wide = "0.7.33"
