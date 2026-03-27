@@ -3,10 +3,7 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
-import json
-
-with open("out.json") as f:
-    data = pd.DataFrame(json.load(f))
+data = pd.read_csv("out.csv")
 data["h"] = data["h"].astype(str) + data["pf"].map({True: " (+pf)", False: ""})
 
 plt.close()

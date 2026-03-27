@@ -51,27 +51,16 @@ fn main() {
         Box::new(U64HashSet::new(1.3, &[])),
         Box::new(U64HashSet::new(1.2, &[])),
         Box::new(U64HashSet::new(1.1, &[])),
-        Box::new(StaticHashSet::<false>::new(1.4, 0.001, &[])),
-        Box::new(StaticHashSet::<false>::new(1.2, 0.003, &[])),
-        Box::new(StaticHashSet::<false>::new(1.1, 0.006, &[])),
+        Box::new(StaticHashSet::<false>::new(1.4, 0.002, &[])),
+        Box::new(StaticHashSet::<false>::new(1.2, 0.005, &[])),
+        Box::new(StaticHashSet::<false>::new(1.1, 0.012, &[])),
+        // Box::new(StaticHashSet::<true>::new(1.4, 0.001, &[])),
+        // Box::new(StaticHashSet::<true>::new(1.2, 0.002, &[])),
+        // Box::new(StaticHashSet::<true>::new(1.1, 0.005, &[])),
     ];
     bench(&ns, &hashers);
 
-    // let n = 118_000_000; // 2.844x overhead
-    // let n = 117_000_000; // 1.434x overhead
-    // for n in [100_000_000] {
-    //     // absl(n);
-    //     u64_hashset(n);
-    //     static_hashset(n);
-    //     // ef(n);
-    // }
-
-    // eprintln!("Slots overhead:    {}", (b * k) as f32 / n as f32 - 1.0);
-    // eprintln!("Metadata overhead: {}", p_bits as f32 / (64 * n) as f32);
-    // for s in 0..=8 {
-    //     eprintln!("S = {s}");
-    //     test(n, p_bits.div_ceil(s.max(1)), k, b, s);
-    // }
+    // TODO: Slots overhead and metadata overhead separately?
 }
 
 fn time<T>(mut f: impl FnMut() -> T) -> (f32, T) {
@@ -89,7 +78,6 @@ pub struct Bencher {
     queries: [Vec<u32>; 5],
 }
 
-#[derive(serde::Serialize)]
 pub struct BenchResult {
     h: String,
     n: usize,
@@ -162,13 +150,16 @@ pub fn bench(ns: &[usize], hs: &[Box<dyn HashSet>]) {
         "{:<30} {:>11} | {:>8} {:>8} | {:>8} {:>8} {:>8} {:>8} {:>8} ",
         "Type", "n", "build", "overhead", "p=0.01", "p=0.10", "p=0.5", "p=0.90", "p=0.99"
     );
-    let mut results = vec![];
+    println!("h,n,pf,build,overhead,q01,q10,q50,q90,q99");
     for &n in ns {
         let bencher = Bencher::new(n);
         for h in hs {
-            results.push(bencher.bench(&**h));
+            let r = bencher.bench(&**h);
+            println!(
+                "{},{},{},{},{},{},{},{},{},{}",
+                r.h, r.n, r.pf, r.build, r.overhead, r.q01, r.q10, r.q50, r.q90, r.q99
+            );
         }
         eprintln!();
     }
-    serde_json::to_writer_pretty(std::io::stdout(), &results).unwrap();
 }
