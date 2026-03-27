@@ -41,23 +41,71 @@ pub enum Mode {
     /// Process buckets left to right, and allow bumping
     LinearBump,
     /// Process buckets left to right, and allow smooth bumping.
-    LinearSmoothBump,
+    /// Picks the first key that does not overflow buckets.
+    LinearSmoothBumpGreedy(usize),
+    /// Process buckets left to right, and allow smooth bumping.
+    /// Tries all keys up to threshold, and only then picks the first working key.
+    LinearSmoothBump(usize),
     /// Process buckets large to small
     Sort,
     /// Process buckets large to small, and allow bumping
     SortBump,
+    /// Process buckets large to small, and allow smooth bumping.
+    /// Picks the first key that does not overflow buckets.
+    SortSmoothBumpGreedy(usize),
+    /// Process buckets large to small, and allow smooth bumping.
+    /// Tries all keys up to threshold, and only then picks the first working key.
+    SortSmoothBump(usize),
+    /// Process buckets large to small, and allow smooth bumping.
+    /// Tries all keys, and picks the best one with minimal bumping.
+    SortSmoothBumpLazy(usize),
     /// Process buckets left to right, and backtrack
     Consensus,
 }
 
 impl Kphf {
     pub fn new(alpha: f32, bits_per_key: f32, keys: &[T], mode: Mode) -> Self {
-        let sort = matches!(mode, Mode::Sort | Mode::SortBump);
+        let start = std::time::Instant::now();
+        let sort = matches!(
+            mode,
+            Mode::Sort | Mode::SortBump | Mode::SortSmoothBumpGreedy(_) | Mode::SortSmoothBump(_)
+        );
         let consensus = matches!(mode, Mode::Consensus);
         let bump = matches!(
             mode,
-            Mode::LinearBump | Mode::LinearSmoothBump | Mode::SortBump
+            Mode::LinearBump
+                | Mode::LinearSmoothBumpGreedy(_)
+                | Mode::LinearSmoothBump(_)
+                | Mode::SortBump
+                | Mode::SortSmoothBumpGreedy(_)
+                | Mode::SortSmoothBump(_)
+                | Mode::SortSmoothBumpLazy(_)
         );
+        let smoothbump = matches!(
+            mode,
+            Mode::LinearSmoothBump(_)
+                | Mode::LinearSmoothBumpGreedy(_)
+                | Mode::SortSmoothBump(_)
+                | Mode::SortSmoothBumpGreedy(_)
+                | Mode::SortSmoothBumpLazy(_)
+        );
+        let threshold = if smoothbump {
+            match mode {
+                Mode::LinearSmoothBumpGreedy(t)
+                | Mode::LinearSmoothBump(t)
+                | Mode::SortSmoothBumpGreedy(t)
+                | Mode::SortSmoothBump(t)
+                | Mode::SortSmoothBumpLazy(t) => t,
+                _ => unreachable!(),
+            }
+        } else {
+            0
+        };
+        let smoothbumpgreedy = matches!(
+            mode,
+            Mode::LinearSmoothBumpGreedy(_) | Mode::SortSmoothBumpGreedy(_)
+        );
+        let smoothbumplazy = matches!(mode, Mode::SortSmoothBumpLazy(_));
 
         // eprintln!("building..");
         let k = BIN_SIZE;
@@ -73,12 +121,13 @@ impl Kphf {
         // total bits
         let bits = s * p;
 
-        // 1. sort the keys
+        // 1. sort the keys by part
         let mut keys = keys.to_vec();
-        keys.sort_unstable();
+        // keys.sort_unstable();
+        keys.sort_unstable_by_key(|&key| (to_part(key, p, k), key));
         keys.dedup();
 
-        // 2. split into b even parts
+        // 2. split into p parts
         let mut part_sizes = vec![0; p];
         let shift = 64 - p.trailing_zeros();
         for key in &*keys {
@@ -135,6 +184,7 @@ impl Kphf {
             // }
             elems_done += len;
             let part = &keys[start..end];
+            assert!(part.is_sorted());
 
             // score function
             fn pow(pow: u32) -> impl Fn(&[usize]) -> i64 {
@@ -165,7 +215,7 @@ impl Kphf {
             // let f = maybe_optimal;
 
             // hash all keys with two seeds, and collect bin size statistics
-            let mut vals = vec![(usize::MAX, i64::MAX, usize::MAX)];
+            let mut vals = vec![(usize::MAX, usize::MAX, i64::MAX, usize::MAX)];
 
             let seed_offset = if consensus {
                 u64::from_be_bytes(seeds[i..i + 8].try_into().unwrap())
@@ -185,23 +235,82 @@ impl Kphf {
                 seed_offset.to_be_bytes()
             );
 
+            let max_key_for_seed = |seed: usize| {
+                if seed < threshold {
+                    u32::MAX
+                } else {
+                    u32::MAX / (256 - threshold as u32) * (255 - seed) as u32
+                }
+            };
+            // let max_key_for_seed = |seed: usize| {
+            //     if seed == 255 {
+            //         return 0;
+            //     }
+            //     if seed < threshold {
+            //         u32::MAX
+            //     } else {
+            //         u32::MAX / 100 * 80
+            //     }
+            // };
+
+            let mut ok = false;
+
             for seed in 0..(1 << s) {
+                if smoothbump && !smoothbumplazy && seed >= threshold && ok {
+                    break;
+                }
                 let mut counts = vec![0; k + 1];
-                for &key in part {
-                    let bi = to_bin(key, seed_offset + seed as u64, b);
+                let max_key = max_key_for_seed(seed);
+                let mut bumped = 0;
+                for key in part {
+                    if smoothbump && *key > max_key {
+                        // eprintln!(
+                        //     "smoothbump: seed {seed} max_key {max_key:>0x} => key {key:>0x} bumped idx {} of {}",
+                        //     part.element_offset(key).unwrap(),
+                        //     part.len(),
+
+                        // );
+                        bumped = part.len() - part.element_offset(key).unwrap();
+                        break;
+                    }
+                    let bi = to_bin(*key, seed_offset + seed as u64, b);
                     counts[(bin_sizes[bi] as usize).min(k)] += 1;
                     // update the bin_size to handle self-collisions
                     bin_sizes[bi] += 1;
                 }
+                // eprintln!("Counts for seed {seed}: {counts:?}");
                 let score = f(&counts);
-                vals.push((counts[BIN_SIZE], score, seed));
+                vals.push((counts[BIN_SIZE], bumped, score, seed));
+                if bumped == 0 && counts[BIN_SIZE] == 0 {
+                    ok = true;
+                }
                 for &key in part {
+                    if smoothbump && key > max_key {
+                        continue;
+                    }
                     let bi = to_bin(key, seed_offset + seed as u64, b);
                     bin_sizes[bi] -= 1;
+                }
+                if smoothbump && !smoothbumplazy {
+                    if smoothbumpgreedy {
+                        if counts[BIN_SIZE] == 0 {
+                            break;
+                        }
+                    } else {
+                        if seed >= threshold && counts[BIN_SIZE] == 0 {
+                            break;
+                        }
+                    }
                 }
             }
             vals.sort_by(|x, y| x.partial_cmp(y).unwrap());
             let best = vals[tries[i] as usize];
+            if smoothbumplazy {
+                eprintln!("best {best:?}");
+            }
+            let num_bumped_for_seed = best.1;
+            // fix for added best.1 = #bumped count.
+            let best = (best.0, best.2, best.3);
             if consensus && best.0 > 0 {
                 elems_done -= len;
                 backtracks += 1;
@@ -258,8 +367,14 @@ impl Kphf {
             assert!(seed < 256);
             // eprintln!("Set {} to {seed}; best: {best:?}", idx + 7);
             seeds[idx + 7] = seed as u8;
+            let max_key = max_key_for_seed(seed);
 
+            let mut smoothbumped = 0;
             for &key in part {
+                if smoothbump && key > max_key {
+                    smoothbumped += 1;
+                    continue;
+                }
                 let bi = to_bin(key, seed_offset + seed as u64, b);
                 if bin_sizes[bi] < k as u8 {
                     bin_sizes[bi] += 1;
@@ -272,6 +387,16 @@ impl Kphf {
                         panic!();
                     }
                 }
+            }
+            if smoothbumplazy {
+                assert_eq!(num_bumped_for_seed, smoothbumped);
+            }
+            if smoothbump && smoothbumped > 0 {
+                bumped += smoothbumped;
+                // eprintln!(
+                //     "smoothbump: fixing seed {seed:>4} for bucket {i:>6} of {p:>6} of size {:>3}. Bumped {smoothbumped:>3} [{bumped:>5} total]",
+                //     part.len()
+                // );
             }
 
             i += 1;
@@ -300,10 +425,13 @@ impl Kphf {
         //     );
         // }
 
+        let duration = start.elapsed();
         eprintln!(
-            "alpha: {alpha:>4.2}, bits/key: {bits_per_key:<6}, mode: {mode:?}, bits/key: {:.4} Collisions: {:>7} BTs {backtracks:>7} Bumped {bumped:>7}",
+            "alpha: {alpha:>4.2}, bits/key: {bits_per_key:<6}, mode: {:>27}, bits/key: {:.4} Collisions: {:>7} BTs {backtracks:>7} Bumped {bumped:>7} ({:.4}%) {:>6?}ms",
+            format!("{mode:?}"),
             (m as f32) / (n as f32),
-            num_collisions
+            num_collisions, bumped as f32 / n as f32 * 100.0,
+            duration.as_millis()
         );
         Self {
             alpha,
@@ -325,10 +453,42 @@ pub fn test() {
     rand::fill(&mut keys[..]);
 
     for alpha in [0.90] {
-        for bits_per_key in [0.3, 0.275, 0.25, 0.225] {
-            for mode in [Mode::SortBump, Mode::Consensus] {
+        for bits_per_key in [0.60, 0.50, 0.45, 0.40, 0.35, 0.3, 0.275, 0.25, 0.225] {
+            for mode in [
+                // Mode::Linear,
+                // Mode::LinearBump,
+                // // Mode::LinearSmoothBumpGreedy(128),
+                // // Mode::LinearSmoothBumpGreedy(192),
+                // // Mode::LinearSmoothBumpGreedy(224),
+                // // Mode::LinearSmoothBumpGreedy(240),
+                // // Mode::LinearSmoothBumpGreedy(248),
+                // // Mode::LinearSmoothBump(128),
+                // // Mode::LinearSmoothBump(192),
+                // // Mode::LinearSmoothBump(224),
+                // // Mode::LinearSmoothBump(240),
+                // // Mode::LinearSmoothBump(248),
+                // Mode::Sort,
+                Mode::SortBump,
+                // Mode::SortSmoothBumpGreedy(128),
+                // Mode::SortSmoothBumpGreedy(192),
+                // Mode::SortSmoothBumpGreedy(224),
+                // Mode::SortSmoothBumpGreedy(240),
+                Mode::SortSmoothBumpGreedy(254),
+                // Mode::SortSmoothBump(128),
+                // Mode::SortSmoothBump(192),
+                // Mode::SortSmoothBump(224),
+                // Mode::SortSmoothBump(240),
+                // Mode::SortSmoothBump(248),
+                // Mode::SortSmoothBumpLazy(128),
+                // Mode::SortSmoothBumpLazy(192),
+                // Mode::SortSmoothBumpLazy(224),
+                // Mode::SortSmoothBumpLazy(240),
+                // Mode::SortSmoothBumpLazy(248),
+                Mode::Consensus,
+            ] {
                 let kphf = Kphf::new(alpha, bits_per_key, &keys, mode);
             }
+            eprintln!();
         }
     }
 }
