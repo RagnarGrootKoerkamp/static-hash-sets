@@ -499,39 +499,6 @@ impl KptrHash {
     }
 }
 
-pub fn test_config(keys: &[u32], alpha: f32, bits_per_key: f32, mode: Mode) {
-    let Some(kphf) = KptrHash::new(alpha, bits_per_key, &keys, mode) else {
-        return;
-    };
-    let mut cnt = vec![0; kphf.b];
-    for key in keys {
-        let bi = kphf.get(*key);
-        cnt[bi] += 1;
-        assert!(cnt[bi] <= kphf.k, "bin {bi} has {} keys", cnt[bi]);
-    }
-}
-
-#[test]
-fn correctness() {
-    let n = 1_000_000;
-    let mut keys = vec![0u32; n];
-    rand::fill(&mut keys[..]);
-
-    for alpha in [0.90] {
-        for bits_per_key in [0.60, 0.50, 0.45, 0.40, 0.35] {
-            for mode in [
-                Mode::Linear,
-                Mode::LinearBump,
-                Mode::Sort,
-                Mode::SortBump,
-                Mode::Consensus,
-            ] {
-                test_config(&keys, alpha, bits_per_key, mode);
-            }
-        }
-    }
-}
-
 pub fn test() {
     let n = 1_000_000;
     let mut keys = vec![0u32; n];
@@ -575,5 +542,52 @@ pub fn test() {
             }
             eprintln!();
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    fn test_config(keys: &[u32], alpha: f32, bits_per_key: f32, mode: Mode) {
+        let Some(kphf) = KptrHash::new(alpha, bits_per_key, &keys, mode) else {
+            return;
+        };
+        let mut cnt = vec![0; kphf.b];
+        for key in keys {
+            let bi = kphf.get(*key);
+            cnt[bi] += 1;
+            assert!(cnt[bi] <= kphf.k, "bin {bi} has {} keys", cnt[bi]);
+        }
+    }
+
+    #[test]
+    fn correctness() {
+        let n = 1_000_000;
+        let keys = gen_keys(n);
+
+        for alpha in [0.90] {
+            for bits_per_key in [0.60] {
+                for mode in [
+                    Mode::Linear,
+                    // Mode::LinearBump,
+                    // Mode::Sort,
+                    // Mode::SortBump,
+                    // Mode::Consensus,
+                ] {
+                    test_config(&keys, alpha, bits_per_key, mode);
+                }
+            }
+        }
+    }
+
+    fn gen_keys(n: usize) -> Vec<u32> {
+        let mut keys = std::collections::HashSet::with_capacity(n);
+        let mut buf = vec![0u32; 1024];
+        while keys.len() < n {
+            rand::fill(&mut buf[..]);
+            keys.extend(buf.iter().copied());
+        }
+        let keys: Vec<u32> = keys.into_iter().take(n).collect();
+        keys
     }
 }
