@@ -1,4 +1,4 @@
-#![feature(impl_trait_in_assoc_type, widening_mul)]
+#![feature(impl_trait_in_assoc_type, widening_mul, adt_const_params, generic_const_exprs)]
 
 pub trait KphfT {
     fn name(&self) -> &'static str;
@@ -10,50 +10,27 @@ pub trait KphfT {
     fn get(&mut self, key: u32) -> usize;
 }
 
-use std::array::from_fn;
-
 fn mul(a: usize, b: usize) -> usize {
     a.widening_mul(b).1
 }
-type T = u32;
 
-fn to_part(key: T, p: usize, k: usize) -> usize {
-    let x = fxhash::hash64(&(key ^ 13245)) as usize;
-    // first, replace x by 1-(1-x)^2 = 2x - x^2
-    // let x = (2*x).wrapping_sub(mul(x, x));
-
-    // quadratic: x^2
-    let sq = mul(x, x);
-    // qubic: (x^2 + x^3)/2
-    let cube = mul(sq, x);
-    let c = sq / 2 + cube / 2;
-    // quartic: x^4/3 + x^3/6 + x^2/2
-    let quart = mul(sq, sq);
-    let q = quart / 3 + cube / 6 + sq / 2;
-
-    // x**6
-    let six = mul(quart, sq);
-    let oct = mul(quart, quart);
-
-    // c.widening_mul(p).1
-    six.widening_mul(p).1
+pub trait Key: Copy + Ord + std::hash::Hash + std::ops::BitXor<Output = Self> {
+    const SALT: Self;
+    fn from_seed(seed: u64) -> Self;
 }
 
-fn to_bin(key: T, seed: u64, b: usize) -> usize {
-    (fxhash::hash64(&(key ^ seed as T)) as usize)
-        .widening_mul(b)
-        .1
+impl Key for u32 {
+    const SALT: Self = 13245;
+    fn from_seed(seed: u64) -> Self {
+        seed as u32
+    }
 }
 
-pub struct KptrHash {
+pub struct KptrHash<const MODE: Mode, const K: usize> {
     /// Fill ratio
     pub alpha: f32,
     /// Bits per key
     pub bits_per_key: f32,
-    /// The construction mode.
-    mode: Mode,
-    /// Number of keys per bin.
-    k: usize,
     /// Number of keys.
     n: usize,
     /// Number of bins.
@@ -66,11 +43,9 @@ pub struct KptrHash {
     bumped: Option<Box<Self>>,
 }
 
-const BIN_SIZE: usize = 8;
-const BITS_PER_BUCKET: usize = 8;
 const PADDING: usize = 100;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, std::marker::ConstParamTy)]
 pub enum Mode {
     /// Process buckets left to right
     Linear,
@@ -84,68 +59,91 @@ pub enum Mode {
     Consensus,
 }
 
-impl KptrHash {
-    pub fn new(alpha: f32, bits_per_key: f32, keys: &[T], mode: Mode) -> Option<Self> {
-        let start = std::time::Instant::now();
-        let sort = matches!(mode, Mode::Sort | Mode::SortBump);
-        let consensus = matches!(mode, Mode::Consensus);
-        let bump = matches!(mode, Mode::LinearBump | Mode::SortBump);
+impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
+    fn to_part<T: Key>(&self, key: T) -> usize {
+        let x = fxhash::hash64(&(key ^ T::SALT)) as usize;
+        // quadratic: x^2
+        let sq = mul(x, x);
+        // x**6
+        let six = mul(mul(sq, sq), sq);
+        six.widening_mul(self.num_buckets).1
+    }
 
-        let k = BIN_SIZE;
-        // bits per bucket
+    fn to_bin<T: Key>(&self, key: T, seed: u64) -> usize {
+        (fxhash::hash64(&(key ^ T::from_seed(seed))) as usize)
+            .widening_mul(self.num_bins)
+            .1
+    }
+
+    pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
         let n = keys.len();
         // bins
-        let num_bins = ((n as f32 / alpha) as usize).div_ceil(k);
+        let num_bins = ((n as f32 / alpha) as usize).div_ceil(K);
         // target metadata bits
         let m = (n as f32 * bits_per_key) as usize;
         // #buckets
-        let num_buckets = m.div_ceil(BITS_PER_BUCKET);
+        let num_buckets = m.div_ceil(8);
+
+        let mut kphf = Self {
+            alpha,
+            bits_per_key,
+            n,
+            num_bins,
+            num_buckets,
+            seeds: vec![],
+            bumped: None,
+        };
+        kphf.build(keys).map(|_| kphf)
+    }
+
+    fn build<T: Key>(&mut self, keys: &[T]) -> Option<()> {
+        let start = std::time::Instant::now();
+        let sort = matches!(MODE, Mode::Sort | Mode::SortBump);
+        let consensus = matches!(MODE, Mode::Consensus);
+        let bump = matches!(MODE, Mode::LinearBump | Mode::SortBump);
+
+        let n = self.n;
 
         // 1. sort the keys by part
         let mut keys = keys.to_vec();
         // keys.sort_unstable();
-        keys.sort_unstable_by_key(|&key| (to_part(key, num_buckets, k), key));
+        keys.sort_unstable_by_key(|&key| (self.to_part(key), key));
         keys.dedup();
 
         // 2. split into p parts
-        let mut part_sizes = vec![0; num_buckets];
+        let mut part_sizes = vec![0; self.num_buckets];
         for key in &*keys {
-            let p = to_part(*key, num_buckets, k);
+            let p = self.to_part(*key);
             part_sizes[p] += 1;
         }
-        let mut part_starts = vec![0; num_buckets + 1];
-        for i in 1..=num_buckets {
+        let mut part_starts = vec![0; self.num_buckets + 1];
+        for i in 1..=self.num_buckets {
             part_starts[i] = part_starts[i - 1] + part_sizes[i - 1];
         }
 
         // 3. Sort parts by decreasing size
-        let mut perm = (0..num_buckets).collect::<Vec<_>>();
+        let mut perm = (0..self.num_buckets).collect::<Vec<_>>();
 
         if sort {
             perm.sort_by_key(|&i| std::cmp::Reverse(part_sizes[i]));
         }
 
         // 4. init bin sizes
-        let mut bin_sizes = vec![0u8; num_bins + PADDING];
-        let mut seeds = vec![0u8; num_buckets + 7];
-        let mut tries = vec![0u8; num_buckets];
+        let mut bin_sizes = vec![0u8; self.num_bins + PADDING];
+        let mut seeds = vec![0u8; self.num_buckets + 7];
+        let mut tries = vec![0u8; self.num_buckets];
 
         let mut bumped = 0;
         let mut backtracks = 0;
         let mut i = 0;
 
-        let mut lg: [f64; BIN_SIZE + 1] = from_fn(|i| (i as f64).log2());
-        lg[0] = f64::MIN;
+        let mut bumped_keys: Vec<T> = vec![];
 
-        let mut bumped_keys = vec![];
-
-        while i < num_buckets {
+        while i < self.num_buckets {
             let idx = perm[i];
             let start = part_starts[idx];
             let end = part_starts[idx + 1];
             let len = end - start;
-
-            let num_full = bin_sizes.iter().filter(|&&x| x == k as u8).count();
 
             let part = &keys[start..end];
             assert!(part.is_sorted());
@@ -189,18 +187,18 @@ impl KptrHash {
                 seed_offset.to_be_bytes()
             );
 
-            for seed in 0..(1 << BITS_PER_BUCKET) - if bump { 1 } else { 0 } {
-                let mut counts = vec![0; k + 1];
+            for seed in 0..256_usize - if bump { 1 } else { 0 } {
+                let mut counts = vec![0; K + 1];
                 for key in part {
-                    let bi = to_bin(*key, seed_offset + seed as u64, num_bins);
-                    counts[(bin_sizes[bi] as usize).min(k)] += 1;
+                    let bi = self.to_bin(*key, seed_offset + seed as u64);
+                    counts[(bin_sizes[bi] as usize).min(K)] += 1;
                     // update the bin_size to handle self-collisions
                     bin_sizes[bi] += 1;
                 }
                 let score = f(&counts);
-                vals.push((counts[BIN_SIZE], score, seed));
+                vals.push((counts[K], score, seed));
                 for &key in part {
-                    let bi = to_bin(key, seed_offset + seed as u64, num_bins);
+                    let bi = self.to_bin(key, seed_offset + seed as u64);
                     bin_sizes[bi] -= 1;
                 }
             }
@@ -217,13 +215,12 @@ impl KptrHash {
 
                     let start = part_starts[idx - 1];
                     let end = part_starts[idx];
-                    let len = end - start;
                     let part = &keys[start..end];
 
                     let seed = u64::from_be_bytes(seeds[i - 1..i + 7].try_into().unwrap());
 
                     for &key in part {
-                        let bi = to_bin(key, seed, num_bins);
+                        let bi = self.to_bin(key, seed);
                         assert!(bin_sizes[bi] > 0);
                         bin_sizes[bi] -= 1;
                     }
@@ -254,8 +251,8 @@ impl KptrHash {
             seeds[idx + 7] = seed as u8;
 
             for &key in part {
-                let bi = to_bin(key, seed_offset + seed as u64, num_bins);
-                assert!( bin_sizes[bi] < k as u8, "collision at {i} size {len} seed {seed} offset {seed_offset:>0x} best {best:?} bin id {bi} bin size {}", bin_sizes[bi]);
+                let bi = self.to_bin(key, seed_offset + seed as u64);
+                assert!( bin_sizes[bi] < K as u8, "collision at {i} size {len} seed {seed} offset {seed_offset:>0x} best {best:?} bin id {bi} bin size {}", bin_sizes[bi]);
                 bin_sizes[bi] += 1;
             }
 
@@ -264,72 +261,42 @@ impl KptrHash {
 
         let duration = start.elapsed();
         eprintln!(
-            "alpha: {alpha:>4.2}, bits/key: {bits_per_key:<6}, mode: {:>27}, bits/key: {:.4} BTs {backtracks:>7} Bumped {bumped:>7} ({:.4}%) {:>6?}ms",
-            format!("{mode:?}"),
-            (m as f32) / (n as f32),
+            "alpha: {:>4.2}, bits/key: {:<6}, mode: {:>27} BTs {backtracks:>7} Bumped {bumped:>7} ({:.4}%) {:>6?}ms",
+            self.alpha,
+            self.bits_per_key,
+            format!("{MODE:?}"),
             bumped as f32 / n as f32 * 100.0,
             duration.as_millis()
         );
 
-        Some(Self {
-            alpha,
-            bits_per_key,
-            mode,
-            k,
-            n,
-            num_bins,
-            num_buckets,
-            seeds,
-            bumped: if bumped > 0 {
-                Some(Box::new(Self::new(
-                    // use a lazy load factor for fallback
-                    0.5,
-                    // double the bits/key for bumped keys
-                    2.0 * bits_per_key,
-                    &bumped_keys,
-                    mode,
-                )?))
-            } else {
-                None
-            },
-        })
+        self.seeds = seeds;
+        if bumped > 0 {
+            self.bumped = Some(Box::new(Self::new::<T>(
+                // use a lazy load factor for fallback
+                0.5,
+                // double the bits/key for bumped keys
+                2.0 * self.bits_per_key,
+                &bumped_keys,
+            )?));
+        }
+        Some(())
     }
 
     pub fn bins(&self) -> usize {
         self.num_bins + self.bumped.as_ref().map_or(0, |b| b.bins())
     }
 
-    pub fn get(&self, key: T) -> usize {
-        let part = to_part(key, self.num_buckets, self.k);
-        let seed = match self.mode {
-            Mode::Consensus => u64::from_be_bytes(self.seeds[part..part + 8].try_into().unwrap()),
-            _ => self.seeds[part + 7] as u64,
+    pub fn get<T: Key>(&self, key: T) -> usize {
+        let part = self.to_part(key);
+        let seed = if matches!(MODE, Mode::Consensus) {
+            u64::from_be_bytes(self.seeds[part..part + 8].try_into().unwrap())
+        } else {
+            self.seeds[part + 7] as u64
         };
-        if matches!(self.mode, Mode::LinearBump | Mode::SortBump) && seed == 255 {
+        if matches!(MODE, Mode::LinearBump | Mode::SortBump) && seed == 255 {
             self.num_bins + self.bumped.as_ref().unwrap().get(key)
         } else {
-            to_bin(key, seed, self.num_bins)
-        }
-    }
-}
-
-pub fn test() {
-    let n = 1_000_000;
-    let mut keys = vec![0u32; n];
-    rand::fill(&mut keys[..]);
-
-    for alpha in [0.90] {
-        for bits_per_key in [0.60, 0.50, 0.45, 0.40, 0.35, 0.3, 0.275, 0.25, 0.225] {
-            for mode in [
-                // Mode::Linear,
-                // Mode::LinearBump,
-                // Mode::Sort,
-                Mode::SortBump,
-                Mode::Consensus,
-            ] {
-                let kphf = KptrHash::new(alpha, bits_per_key, &keys, mode);
-            }
-            eprintln!();
+            self.to_bin(key, seed)
         }
     }
 }
@@ -337,15 +304,15 @@ pub fn test() {
 #[cfg(test)]
 mod test {
     use super::*;
-    fn test_config(keys: &[u32], alpha: f32, bits_per_key: f32, mode: Mode) {
-        let Some(kphf) = KptrHash::new(alpha, bits_per_key, &keys, mode) else {
+    fn test_config<const MODE: Mode, const K: usize>(keys: &[u32], alpha: f32, bits_per_key: f32) {
+        let Some(kphf) = KptrHash::<MODE, K>::new(alpha, bits_per_key, keys) else {
             return;
         };
         let mut cnt = vec![0; kphf.bins()];
         for key in keys {
             let bi = kphf.get(*key);
             cnt[bi] += 1;
-            assert!(cnt[bi] <= kphf.k, "bin {bi} has {} keys", cnt[bi]);
+            assert!(cnt[bi] <= K, "bin {bi} has {} keys", cnt[bi]);
         }
     }
 
@@ -356,15 +323,11 @@ mod test {
 
         for alpha in [0.90] {
             for bits_per_key in [0.40, 0.35, 0.3, 0.25] {
-                for mode in [
-                    Mode::Linear,
-                    Mode::LinearBump,
-                    Mode::Sort,
-                    Mode::SortBump,
-                    Mode::Consensus,
-                ] {
-                    test_config(&keys, alpha, bits_per_key, mode);
-                }
+                test_config::<{ Mode::Linear }, 8>(&keys, alpha, bits_per_key);
+                test_config::<{ Mode::LinearBump }, 8>(&keys, alpha, bits_per_key);
+                test_config::<{ Mode::Sort }, 8>(&keys, alpha, bits_per_key);
+                test_config::<{ Mode::SortBump }, 8>(&keys, alpha, bits_per_key);
+                test_config::<{ Mode::Consensus }, 8>(&keys, alpha, bits_per_key);
             }
         }
     }
