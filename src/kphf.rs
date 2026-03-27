@@ -1,5 +1,5 @@
 use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-use std::array::from_fn;
+use std::array::{from_fn, repeat};
 use std::cmp::Reverse;
 use std::hash::{BuildHasher, BuildHasherDefault};
 use std::hint::select_unpredictable;
@@ -31,11 +31,18 @@ pub struct Kphf {
     seeds: Vec<u8>,
 }
 
-const BIN_SIZE: usize = 4;
+const BIN_SIZE: usize = 8;
 const PADDING: usize = 100;
 
 impl Kphf {
-    pub fn new(alpha: f32, bits_per_key: f32, keys: &[T], sort: bool, consensus: bool) -> Self {
+    pub fn new(
+        alpha: f32,
+        bits_per_key: f32,
+        keys: &[T],
+        sort: bool,
+        consensus: bool,
+        bump: bool,
+    ) -> Self {
         // eprintln!("building..");
         let k = BIN_SIZE;
         // bits per bucket
@@ -83,6 +90,7 @@ impl Kphf {
         let mut seeds = vec![0u8; p + 7];
         let mut tries = vec![0u8; p];
 
+        let mut bumped = 0;
         let mut collisions = vec![];
         let mut backtracks = 0;
         // eprintln!("find seeds..");
@@ -101,10 +109,10 @@ impl Kphf {
             //     eprintln!("bucket {i} of {p} len {len}");
             // }
 
-            assert_eq!(
-                elems_done,
-                bin_sizes.iter().map(|&x| x as usize).sum::<usize>() + collisions.len()
-            );
+            // assert_eq!(
+            //     elems_done,
+            //     bin_sizes.iter().map(|&x| x as usize).sum::<usize>() + collisions.len()
+            // );
             let num_full = bin_sizes.iter().filter(|&&x| x == k as u8).count();
 
             // if i % 1024 == 0 {
@@ -221,6 +229,19 @@ impl Kphf {
                 }
                 continue;
             }
+
+            if bump && best.0 > 0 {
+                elems_done -= part.len();
+                bumped += part.len();
+                collisions.extend(std::iter::repeat_n(0, best.0));
+                i += 1;
+                // eprintln!(
+                //     "{i}: Bump bucket of size {}; total bumped {bumped}",
+                //     part.len()
+                // );
+                continue;
+            }
+
             let seed = best.2;
             assert!(seed < 256);
             // eprintln!("Set {} to {seed}; best: {best:?}", idx + 7);
@@ -245,15 +266,15 @@ impl Kphf {
         }
         let num_collisions = collisions.len();
         // Fix colliding keys.
-        for key in collisions {
-            let part = to_part(key, p, k);
-            let seed = u64::from_be_bytes(seeds[part..part + 8].try_into().unwrap());
-            let mut bi = to_bin(key, seed as u64, b);
-            while bin_sizes[bi] == k as u8 {
-                bi += 1;
-            }
-            bin_sizes[bi] += 1;
-        }
+        // for key in collisions {
+        //     let part = to_part(key, p, k);
+        //     let seed = u64::from_be_bytes(seeds[part..part + 8].try_into().unwrap());
+        //     let mut bi = to_bin(key, seed as u64, b);
+        //     while bin_sizes[bi] == k as u8 {
+        //         bi += 1;
+        //     }
+        //     bin_sizes[bi] += 1;
+        // }
 
         // bin size distribution
         let mut bsizes = vec![0; k + 1];
@@ -268,7 +289,7 @@ impl Kphf {
         // }
 
         eprintln!(
-            "alpha: {alpha:>4.2}, bits/key: {bits_per_key:<6}, sort: {sort:>5}, consensus: {consensus:>5}, bits/key: {:.4} Collisions: {:>7} BTs {backtracks:>7}",
+            "alpha: {alpha:>4.2}, bits/key: {bits_per_key:<6}, sort: {sort:>5}, consensus: {consensus:>5}, bits/key: {:.4} Collisions: {:>7} BTs {backtracks:>7} Bumped {bumped:>7}",
             (m as f32) / (n as f32),
             num_collisions
         );
@@ -291,11 +312,11 @@ pub fn test() {
     let mut keys = vec![0u32; n];
     rand::fill(&mut keys[..]);
 
-    for alpha in [0.95] {
+    for alpha in [0.90] {
         // for (sort, cons) in [(true, false), (false, false), (false, true)] {
-        for (sort, cons) in [(false, true)] {
-            for bits_per_key in [2.0, 1.5, 1.0, 0.75, 0.5] {
-                let kphf = Kphf::new(alpha, bits_per_key, &keys, sort, cons);
+        for bits_per_key in [0.3, 0.275, 0.25, 0.225] {
+            for (sort, cons, bump) in [(true, false, true), (false, true, false)] {
+                let kphf = Kphf::new(alpha, bits_per_key, &keys, sort, cons, bump);
             }
         }
     }
