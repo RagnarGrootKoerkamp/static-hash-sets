@@ -50,6 +50,8 @@ pub struct KptrHash {
     pub alpha: f32,
     /// Bits per key
     pub bits_per_key: f32,
+    /// The construction mode.
+    mode: Mode,
     /// Number of keys per bin.
     k: usize,
     s: usize,
@@ -98,7 +100,7 @@ pub enum Mode {
 }
 
 impl KptrHash {
-    pub fn new(alpha: f32, bits_per_key: f32, keys: &[T], mode: Mode) -> Self {
+    pub fn new(alpha: f32, bits_per_key: f32, keys: &[T], mode: Mode) -> Option<Self> {
         let start = std::time::Instant::now();
         let sort = matches!(
             mode,
@@ -467,9 +469,15 @@ impl KptrHash {
             num_collisions, bumped as f32 / n as f32 * 100.0,
             duration.as_millis()
         );
-        Self {
+
+        if !bump && num_collisions > 0 {
+            return None;
+        }
+
+        Some(Self {
             alpha,
             bits_per_key,
+            mode,
             k,
             s,
             n,
@@ -477,6 +485,49 @@ impl KptrHash {
             m,
             p,
             seeds,
+        })
+    }
+
+    fn get(&self, key: T) -> usize {
+        let part = to_part(key, self.p, self.k);
+        let seed = match self.mode {
+            Mode::Consensus => u64::from_be_bytes(self.seeds[part..part + 8].try_into().unwrap()),
+            _ => self.seeds[part + 7] as u64,
+        };
+        let bi = to_bin(key, seed, self.b);
+        bi
+    }
+}
+
+pub fn test_config(keys: &[u32], alpha: f32, bits_per_key: f32, mode: Mode) {
+    let Some(kphf) = KptrHash::new(alpha, bits_per_key, &keys, mode) else {
+        return;
+    };
+    let mut cnt = vec![0; kphf.b];
+    for key in keys {
+        let bi = kphf.get(*key);
+        cnt[bi] += 1;
+        assert!(cnt[bi] <= kphf.k, "bin {bi} has {} keys", cnt[bi]);
+    }
+}
+
+#[test]
+fn correctness() {
+    let n = 1_000_000;
+    let mut keys = vec![0u32; n];
+    rand::fill(&mut keys[..]);
+
+    for alpha in [0.90] {
+        for bits_per_key in [0.60, 0.50, 0.45, 0.40, 0.35] {
+            for mode in [
+                Mode::Linear,
+                Mode::LinearBump,
+                Mode::Sort,
+                Mode::SortBump,
+                Mode::Consensus,
+            ] {
+                test_config(&keys, alpha, bits_per_key, mode);
+            }
         }
     }
 }
