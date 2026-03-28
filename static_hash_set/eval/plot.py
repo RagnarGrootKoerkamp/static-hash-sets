@@ -3,36 +3,86 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+
 data = pd.read_csv("out.csv")
-data["h"] = data["h"].astype(str) + data["pf"].map({True: " (+pf)", False: ""})
+
+
+def make_category(row):
+    if row["h"] == "FxHashSet":
+        return "1.4-2.8"
+    return str(round(row["overhead"], 1))
+
+
+data["target_overhead"] = data.apply(make_category, axis=1)
+data["label"] = data.apply(
+    lambda row: row["h"] + " (" + row["target_overhead"] + "x)", axis=1
+)
+
+labels = data["label"].unique()
+palette = sns.color_palette(n_colors=len(labels))
+label_color = {
+    "FxHashSet (1.4-2.8x)": "red",
+    "U64HashSet (1.4x)": "green",
+    "U64HashSet (1.3x)": "green",
+    "U64HashSet (1.2x)": "green",
+    "U64HashSet (1.1x)": "green",
+    "StaticHashSet (1.4x)": "blue",
+    "StaticHashSet (1.2x)": "blue",
+    "StaticHashSet (1.1x)": "blue",
+}
+label_lw = {
+    "FxHashSet (1.4-2.8x)": 2.5,
+    "U64HashSet (1.4x)": 2,
+    "U64HashSet (1.3x)": 1.75,
+    "U64HashSet (1.2x)": 1.5,
+    "U64HashSet (1.1x)": 1,
+    "StaticHashSet (1.4x)": 2,
+    "StaticHashSet (1.2x)": 1.5,
+    "StaticHashSet (1.1x)": 1,
+}
 
 plt.close()
 
-# Plot 'n' vs 'build':
-# plt.plot(data["n"], data["build"], label="Build", c="black", lw=0.6)
-sns.lineplot(data=data, x="n", y="build", hue="h", lw=0.6)
-sns.lineplot(data=data, x="n", y="q01", hue="h", ls="--", lw=1.0)
-sns.lineplot(data=data, x="n", y="q10", hue="h", lw=1)
-sns.lineplot(data=data, x="n", y="q50", hue="h", lw=1)
-sns.lineplot(data=data, x="n", y="q90", hue="h", lw=1)
-sns.lineplot(data=data, x="n", y="q99", hue="h", lw=1)
-plt.xlabel("n")
-plt.ylabel("ns / element")
-plt.ylim(0, 30)
-plt.xscale("log", base=2)
-# plt.yscale("log", base=2)
-plt.grid(True, which="both", ls="--", lw=0.5)
-plt.legend(loc="upper left")
-plt.title("FxHashSet<u32> query throughput")
+queries = ["q01", "q10", "q50", "q90", "q99"]
+titles = ["p=0.01", "p=0.10", "p=0.50", "p=0.90", "p=0.99"]
+sizes = [12 * 1024 * 1024]
+cache_labels = ["L3  ", "  RAM"]
 
-# Cache sizes: 32KiB, 256KiB, 12MiB
-# axvline at each size
-sizes = [32 * 1024, 256 * 1024, 12 * 1024 * 1024]
-labels = ["L1  ", "L2  ", "L3  ", "  RAM"]
-for s, l in zip(sizes, labels):
-    plt.axvline(x=s / 4, c="black", lw=1, ls="--")
-    plt.text(s / 4, plt.ylim()[0], l, ha="right", va="bottom", fontsize=16)
-plt.text(sizes[-1] / 4, plt.ylim()[0], labels[-1], ha="left", va="bottom", fontsize=16)
+fig, axes = plt.subplots(2, 3, figsize=(18, 10), sharey=True)
+flat_axes = axes.flatten()
 
-plt.gcf().set_size_inches(10, 6)
-plt.savefig("plot.png", bbox_inches="tight", dpi=300)
+for ax, q, title in zip(flat_axes, queries, titles):
+    for label in labels:
+        subset = data[data["label"] == label]
+        sns.lineplot(
+            data=subset,
+            x="n",
+            y=q,
+            ax=ax,
+            color=label_color[label],
+            lw=label_lw[label],
+            label=label,
+        )
+    ax.set_title(title)
+    ax.set_xlabel("n")
+    ax.set_ylabel("ns / query" if ax in axes[:, 0] else "")
+    ax.set_ylim(0, 30)
+    ax.set_xscale("log", base=2)
+    ax.grid(True, which="both", ls="--", lw=0.5)
+    for s, l in zip(sizes, cache_labels):
+        ax.axvline(x=s / 4, c="black", lw=1, ls="--")
+        ax.text(s / 4, ax.get_ylim()[0], l, ha="right", va="bottom", fontsize=10)
+    ax.text(
+        sizes[-1] / 4,
+        ax.get_ylim()[0],
+        cache_labels[-1],
+        ha="left",
+        va="bottom",
+        fontsize=10,
+    )
+    ax.legend(loc="upper left", fontsize=8)
+
+flat_axes[-1].set_visible(False)
+fig.suptitle("u32 hashset query throughput")
+fig.tight_layout()
+fig.savefig("plot.png", bbox_inches="tight", dpi=300)
