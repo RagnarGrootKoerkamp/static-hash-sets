@@ -6,16 +6,16 @@ use sux::dict::EliasFanoBuilder;
 
 use crate::{static_hashset::StaticHashSet, u64_hashset::U64HashSet};
 
-pub trait HashSet {
+pub trait HashSet: Send + Sync {
     fn name(&self) -> &'static str;
     fn new(&self, keys: &[u32]) -> Box<dyn HashSet>;
     fn allocation_size(&self) -> usize;
     fn has_prefetch(&self) -> bool {
         false
     }
-    fn prefetch(&mut self, key: u32) {}
-    fn get(&mut self, key: u32) -> bool;
-    fn count(&mut self, keys: &[u32]) -> usize {
+    fn prefetch(&self, key: u32) {}
+    fn get(&self, key: u32) -> bool;
+    fn count(&self, keys: &[u32]) -> usize {
         let lookahead = 32;
         let mut c = 0;
         for i in 0..keys.len().saturating_sub(lookahead) {
@@ -42,7 +42,7 @@ impl HashSet for hashbrown::HashSet<u32, FxBuildHasher> {
         self.allocation_size()
     }
     #[inline(always)]
-    fn get(&mut self, key: u32) -> bool {
+    fn get(&self, key: u32) -> bool {
         self.contains(&key)
     }
 }
@@ -63,7 +63,7 @@ impl HashSet for fastbloom::BloomFilter<FxBuildHasher> {
         0
     }
     #[inline(always)]
-    fn get(&mut self, key: u32) -> bool {
+    fn get(&self, key: u32) -> bool {
         self.contains(&key)
     }
 }
@@ -83,7 +83,7 @@ impl HashSet for cuckoofilter::CuckooFilter<FxHasher> {
         0
     }
     #[inline(always)]
-    fn get(&mut self, key: u32) -> bool {
+    fn get(&self, key: u32) -> bool {
         self.contains(&key)
     }
 }
@@ -102,12 +102,11 @@ impl HashSet for U64HashSet {
     fn has_prefetch(&self) -> bool {
         true
     }
-    #[inline(always)]
-    fn prefetch(&mut self, key: u32) {
+    fn prefetch(&self, key: u32) {
         U64HashSet::prefetch(self, key)
     }
     #[inline(always)]
-    fn get(&mut self, key: u32) -> bool {
+    fn get(&self, key: u32) -> bool {
         self.contains(key)
     }
 }
@@ -127,11 +126,11 @@ impl<const PROBE: bool> HashSet for StaticHashSet<PROBE> {
         true
     }
     #[inline(always)]
-    fn prefetch(&mut self, key: u32) {
+    fn prefetch(&self, key: u32) {
         StaticHashSet::prefetch(self, key)
     }
     #[inline(always)]
-    fn get(&mut self, key: u32) -> bool {
+    fn get(&self, key: u32) -> bool {
         self.contains(key)
     }
 }

@@ -61,6 +61,8 @@ fn main() {
     bench(&ns, &hashers);
 
     // TODO: Slots overhead and metadata overhead separately?
+    // TODO: Multithreaded benchmarks.
+    // TODO: Benchmark on server.
 }
 
 fn time<T>(mut f: impl FnMut() -> T) -> (f32, T) {
@@ -71,11 +73,12 @@ fn time<T>(mut f: impl FnMut() -> T) -> (f32, T) {
 }
 
 const QUERIES: usize = 5_000_000;
+const MAX_THREADS: usize = 12;
 
 pub struct Bencher {
     n: usize,
     keys: Vec<u32>,
-    queries: [Vec<u32>; 5],
+    queries: Vec<[Vec<u32>; 5]>,
 }
 
 pub struct BenchResult {
@@ -84,6 +87,7 @@ pub struct BenchResult {
     pf: bool,
     build: f32,
     overhead: f32,
+    threads: usize,
     q01: f32,
     q10: f32,
     q50: f32,
@@ -95,70 +99,110 @@ impl Bencher {
     pub fn new(n: usize) -> Self {
         let mut keys = vec![0; n];
         rand::fill(&mut keys[..]);
-        let mut queries = [
-            vec![0; QUERIES],
-            vec![0; QUERIES],
-            vec![0; QUERIES],
-            vec![0; QUERIES],
-            vec![0; QUERIES],
+        let mut queries = vec![
+            [
+                vec![0; QUERIES],
+                vec![0; QUERIES],
+                vec![0; QUERIES],
+                vec![0; QUERIES],
+                vec![0; QUERIES],
+            ];
+            12
         ];
-        let p = [0.01, 0.1, 0.5, 0.9, 0.99];
-        let rng = &mut rand::rng();
-        for (q, p) in std::iter::zip(&mut queries.iter_mut(), p) {
-            for x in q.iter_mut() {
-                if rand::random_bool(p) {
-                    *x = *keys.choose(rng).unwrap();
-                } else {
-                    *x = rand::random();
+        for queries in &mut queries {
+            let p = [0.01, 0.1, 0.5, 0.9, 0.99];
+            let rng = &mut rand::rng();
+            for (q, p) in std::iter::zip(&mut queries.iter_mut(), p) {
+                for x in q.iter_mut() {
+                    if rand::random_bool(p) {
+                        *x = *keys.choose(rng).unwrap();
+                    } else {
+                        *x = rand::random();
+                    }
                 }
             }
         }
         Self { n, keys, queries }
     }
 
-    pub fn bench(&self, h: &dyn HashSet) -> BenchResult {
+    pub fn bench(&self, h: &dyn HashSet) -> Vec<BenchResult> {
+        const THREAD_COUNTS: [usize; 5] = [1, 2, 3, 6, 12];
+        const PS: [f64; 5] = [0.01, 0.1, 0.5, 0.9, 0.99];
+
         let name = h.name();
         eprint!("{:<30} {:>11} | ", name, self.n);
-        let (build, mut h) = time(|| h.new(&self.keys));
+        let (build, h) = time(|| h.new(&self.keys));
         let build = build / self.n as f32;
         let bits_per_key = h.allocation_size() as f32 * 8.0 / self.n as f32;
         let overhead = bits_per_key / 32.0;
-        eprint!("{:>8.3} {:>8.3} | ", build, overhead);
-        let mut query = [0f32; 5];
-        for i in 0..5 {
-            query[i] = time(|| h.count(&self.queries[i])).0 / QUERIES as f32;
-            eprint!("{:>8.3} ", query[i]);
-        }
+        let pf = h.has_prefetch();
+        eprint!("{:>8.3} {:>8.3} |", build, overhead);
+
+        let mut results = vec![];
+
         eprintln!();
-        BenchResult {
-            h: name.to_string(),
-            n: self.n,
-            pf: h.has_prefetch(),
-            build,
-            overhead,
-            q01: query[0],
-            q10: query[1],
-            q50: query[2],
-            q90: query[3],
-            q99: query[4],
+        for &threads in &THREAD_COUNTS {
+            eprint!("{:>64} {threads:>8}", "");
+            let mut query = [0f32; 5];
+            for (qi, &p) in PS.iter().enumerate() {
+                let start = std::time::Instant::now();
+                std::thread::scope(|scope| {
+                    for t in 0..threads {
+                        let qs = &self.queries[t][qi];
+                        let h = &h;
+                        scope.spawn(move || {
+                            let c = h.count(&qs);
+                            black_box(c);
+                        });
+                    }
+                });
+                query[qi] = start.elapsed().as_nanos() as f32 / (threads * QUERIES) as f32;
+                eprint!(" {:>8.3}", query[qi]);
+            }
+            eprintln!();
+            results.push(BenchResult {
+                h: name.to_string(),
+                n: self.n,
+                pf,
+                build,
+                overhead,
+                threads,
+                q01: query[0],
+                q10: query[1],
+                q50: query[2],
+                q90: query[3],
+                q99: query[4],
+            });
         }
+        results
     }
 }
 
 pub fn bench(ns: &[usize], hs: &[Box<dyn HashSet>]) {
     eprintln!(
-        "{:<30} {:>11} | {:>8} {:>8} | {:>8} {:>8} {:>8} {:>8} {:>8} ",
-        "Type", "n", "build", "overhead", "p=0.01", "p=0.10", "p=0.5", "p=0.90", "p=0.99"
+        "{:<30} {:>11} | {:>8} {:>8} | {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} | ",
+        "Type", "n", "build", "overhead", "threads", "1%", "10%", "50%", "90%", "99%",
     );
-    println!("h,n,pf,build,overhead,q01,q10,q50,q90,q99");
+    println!("h,n,pf,build,overhead,threads,q01,q10,q50,q90,q99");
     for &n in ns {
         let bencher = Bencher::new(n);
         for h in hs {
-            let r = bencher.bench(&**h);
-            println!(
-                "{},{},{},{},{},{},{},{},{},{}",
-                r.h, r.n, r.pf, r.build, r.overhead, r.q01, r.q10, r.q50, r.q90, r.q99
-            );
+            for r in bencher.bench(&**h) {
+                println!(
+                    "{},{},{},{},{},{},{},{},{},{},{}",
+                    r.h,
+                    r.n,
+                    r.pf,
+                    r.build,
+                    r.overhead,
+                    r.threads,
+                    r.q01,
+                    r.q10,
+                    r.q50,
+                    r.q90,
+                    r.q99
+                );
+            }
         }
         eprintln!();
     }

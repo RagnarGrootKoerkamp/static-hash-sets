@@ -30,9 +30,9 @@ pub struct StaticHashSet<const PROBE: bool> {
     seeds: Vec<u8>,
     len: usize,
     has_zero: bool,
-    hits: usize,
-    none: usize,
-    skips: usize,
+    // hits: AtomicUsize,
+    // none: AtomicUsize,
+    // skips: AtomicUsize,
     probelen: FxHashMap<usize, usize>,
     last_b: usize,
     last_j: usize,
@@ -231,9 +231,9 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
             seeds,
             len: 0,
             has_zero: false,
-            hits: 0,
-            none: 0,
-            skips: 0,
+            // hits: AtomicUsize::new(0),
+            // none: AtomicUsize::new(0),
+            // skips: AtomicUsize::new(0),
             probelen: Default::default(),
             last_b: 0,
             last_j: 0,
@@ -275,10 +275,13 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
         let mut counts = [0; 9];
 
         eprintln!("Size    : {}", self.len);
-        eprintln!("hits    : {}", self.hits);
-        eprintln!("None    : {}", self.none);
-        eprintln!("Skips   : {}", self.skips);
-        eprintln!("Skips/el: {}", self.skips as f32 / self.hits as f32);
+        // eprintln!("hits    : {}", self.hits.load(Relaxed));
+        // eprintln!("None    : {}", self.none.load(Relaxed));
+        // eprintln!("Skips   : {}", self.skips.load(Relaxed));
+        // eprintln!(
+        //     "Skips/el: {}",
+        //     self.skips.load(Relaxed) as f32 / self.hits.load(Relaxed) as f32
+        // );
         // return;
 
         let mut sum = 0;
@@ -319,7 +322,7 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
     }
 
     #[inline(always)]
-    pub fn contains(&mut self, key: T) -> bool {
+    pub fn contains(&self, key: T) -> bool {
         if key == 0 {
             return self.has_zero;
         }
@@ -342,16 +345,16 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
             }
 
             if mask > 0 {
-                self.hits += 1;
+                // self.hits.fetch_add(1, Relaxed);
                 return true;
             }
             let has_zero = (h1.cmp_eq(S::ZERO) | h2.cmp_eq(S::ZERO)).move_mask() as u8;
             if has_zero > 0 {
-                self.none += 1;
+                // self.none.fetch_add(1, Relaxed);
                 return false;
             }
 
-            self.skips += 1;
+            // self.skips.fetch_add(1, Relaxed);
             bi += 1;
             i += 1;
         }

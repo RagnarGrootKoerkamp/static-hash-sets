@@ -45,44 +45,54 @@ plt.close()
 
 queries = ["q01", "q10", "q50", "q90", "q99"]
 titles = ["p=0.01", "p=0.10", "p=0.50", "p=0.90", "p=0.99"]
+thread_counts = sorted(data["threads"].unique())
 sizes = [12 * 1024 * 1024]
 cache_labels = ["L3  ", "  RAM"]
 
-fig, axes = plt.subplots(2, 3, figsize=(18, 10), sharey=True)
-flat_axes = axes.flatten()
+nrows = len(thread_counts)
+ncols = len(queries)
+fig, axes = plt.subplots(
+    nrows, ncols, figsize=(5 * ncols, 4 * nrows), sharey="row", sharex=True
+)
 
-for ax, q, title in zip(flat_axes, queries, titles):
-    for label in labels:
-        subset = data[data["label"] == label]
-        sns.lineplot(
-            data=subset,
-            x="n",
-            y=q,
-            ax=ax,
-            color=label_color[label],
-            lw=label_lw[label],
-            label=label,
+for ri, threads in enumerate(thread_counts):
+    thread_data = data[data["threads"] == threads]
+    for ci, (q, title) in enumerate(zip(queries, titles)):
+        ax = axes[ri][ci]
+        for label in labels:
+            subset = thread_data[thread_data["label"] == label]
+            sns.lineplot(
+                data=subset,
+                x="n",
+                y=q,
+                ax=ax,
+                color=label_color[label],
+                lw=label_lw[label],
+                label=label,
+            )
+        if ri == 0:
+            ax.set_title(title)
+        ax.set_xlabel("n" if ri == nrows - 1 else "")
+        ax.set_ylabel(f"threads={threads}\nns / query" if ci == 0 else "")
+        ax.set_ylim(0, 60 / threads)
+        ax.set_xscale("log", base=2)
+        ax.grid(True, which="both", ls="--", lw=0.5)
+        for s, l in zip(sizes, cache_labels):
+            ax.axvline(x=s / 4, c="black", lw=1, ls="--")
+            ax.text(s / 4, ax.get_ylim()[0], l, ha="right", va="bottom", fontsize=8)
+        ax.text(
+            sizes[-1] / 4,
+            ax.get_ylim()[0],
+            cache_labels[-1],
+            ha="left",
+            va="bottom",
+            fontsize=8,
         )
-    ax.set_title(title)
-    ax.set_xlabel("n")
-    ax.set_ylabel("ns / query" if ax in axes[:, 0] else "")
-    ax.set_ylim(0, 30)
-    ax.set_xscale("log", base=2)
-    ax.grid(True, which="both", ls="--", lw=0.5)
-    for s, l in zip(sizes, cache_labels):
-        ax.axvline(x=s / 4, c="black", lw=1, ls="--")
-        ax.text(s / 4, ax.get_ylim()[0], l, ha="right", va="bottom", fontsize=10)
-    ax.text(
-        sizes[-1] / 4,
-        ax.get_ylim()[0],
-        cache_labels[-1],
-        ha="left",
-        va="bottom",
-        fontsize=10,
-    )
-    ax.legend(loc="upper left", fontsize=8)
+        if ri == 0 and ci == ncols - 1:
+            ax.legend(loc="upper left", fontsize=8)
+        else:
+            ax.legend().remove() if ax.get_legend() else None
 
-flat_axes[-1].set_visible(False)
 fig.suptitle("u32 hashset query throughput")
 fig.tight_layout()
 fig.savefig("plot.png", bbox_inches="tight", dpi=300)
