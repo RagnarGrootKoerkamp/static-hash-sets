@@ -13,7 +13,25 @@ pub trait HashSet: Send + Sync {
     }
     fn prefetch(&self, _key: T) {}
     fn get(&self, key: T) -> bool;
-    fn count(&self, keys: &[T]) -> usize {
+    fn count_latency(&self, keys: &[T]) -> usize {
+        let mut c = 0;
+        let mut x = 0;
+        for &key in keys {
+            c += self.get(key ^ x) as usize;
+            x = std::hint::black_box(c as u64 * 0);
+        }
+        std::hint::black_box(c);
+        c
+    }
+    fn count_loop(&self, keys: &[T]) -> usize {
+        let mut c = 0;
+        for &key in keys {
+            c += self.get(key) as usize;
+        }
+        std::hint::black_box(c);
+        c
+    }
+    fn count_prefetch(&self, keys: &[T]) -> usize {
         let lookahead = 32;
         let mut c = 0;
         for i in 0..keys.len().saturating_sub(lookahead) {

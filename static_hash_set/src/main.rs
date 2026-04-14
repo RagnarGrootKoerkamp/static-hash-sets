@@ -82,6 +82,7 @@ pub struct BenchResult {
     build: f32,
     overhead: f32,
     threads: usize,
+    metric: &'static str,
     q01: f32,
     q10: f32,
     q50: f32,
@@ -136,37 +137,51 @@ impl Bencher {
 
         eprintln!();
         for &threads in &THREAD_COUNTS {
-            eprint!("{:>64} {threads:>8}", "");
-            let mut query = [0f32; 5];
-            for (qi, &_p) in PS.iter().enumerate() {
-                let start = std::time::Instant::now();
-                std::thread::scope(|scope| {
-                    for t in 0..threads {
-                        let qs = &self.queries[t][qi];
-                        let h = &h;
-                        scope.spawn(move || {
-                            let c = h.count(&qs);
-                            black_box(c);
-                        });
-                    }
+            for metric in ["latency", "loop", "prefetch"] {
+                eprint!("{:>64} {threads:>8}", "");
+                let mut query = [0f32; 5];
+                for (qi, &_p) in PS.iter().enumerate() {
+                    let start = std::time::Instant::now();
+                    std::thread::scope(|scope| {
+                        for t in 0..threads {
+                            let qs = &self.queries[t][qi];
+                            let h = &h;
+                            scope.spawn(move || match metric {
+                                "latency" => {
+                                    let c = h.count_latency(&qs);
+                                    black_box(c);
+                                }
+                                "loop" => {
+                                    let c = h.count_loop(&qs);
+                                    black_box(c);
+                                }
+                                "prefetch" => {
+                                    let c = h.count_prefetch(&qs);
+                                    black_box(c);
+                                }
+                                _ => unreachable!(),
+                            });
+                        }
+                    });
+                    query[qi] = start.elapsed().as_nanos() as f32 / (threads * QUERIES) as f32;
+                    eprint!(" {:>8.3}", query[qi]);
+                }
+                eprintln!();
+                results.push(BenchResult {
+                    h: name.to_string(),
+                    n: self.n,
+                    pf,
+                    build,
+                    overhead,
+                    threads,
+                    metric,
+                    q01: query[0],
+                    q10: query[1],
+                    q50: query[2],
+                    q90: query[3],
+                    q99: query[4],
                 });
-                query[qi] = start.elapsed().as_nanos() as f32 / (threads * QUERIES) as f32;
-                eprint!(" {:>8.3}", query[qi]);
             }
-            eprintln!();
-            results.push(BenchResult {
-                h: name.to_string(),
-                n: self.n,
-                pf,
-                build,
-                overhead,
-                threads,
-                q01: query[0],
-                q10: query[1],
-                q50: query[2],
-                q90: query[3],
-                q99: query[4],
-            });
         }
         results
     }
@@ -183,13 +198,14 @@ pub fn bench(ns: &[usize], hs: &[Box<dyn HashSet>]) {
         for h in hs {
             for r in bencher.bench(&**h) {
                 println!(
-                    "{},{},{},{},{},{},{},{},{},{},{}",
+                    "{},{},{},{},{},{},{},{},{},{},{},{}",
                     r.h,
                     r.n,
                     r.pf,
                     r.build,
                     r.overhead,
                     r.threads,
+                    r.metric,
                     r.q01,
                     r.q10,
                     r.q50,
