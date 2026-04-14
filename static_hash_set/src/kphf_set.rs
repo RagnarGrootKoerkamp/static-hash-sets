@@ -38,11 +38,7 @@ impl<const MODE: kphf::Mode, const K: usize> IntoIterator for &KphfSet<MODE, K> 
 impl<const MODE: kphf::Mode, const K: usize> KphfSet<MODE, K> {
     pub fn new(alpha: f32, bits_per_key: f32, keys: &[T]) -> Self {
         let kphf = kphf::KptrHash::<MODE, K>::new::<T>(alpha, bits_per_key, keys).unwrap();
-
-        let n = keys.len();
-        let capacity = (n as f32 / alpha).ceil() as usize;
-        let num_bins = capacity.div_ceil(BIN_SIZE);
-        let table = vec![Bin([0 as T; BIN_SIZE]); num_bins].into_boxed_slice();
+        let table = vec![Bin([0 as T; BIN_SIZE]); kphf.num_bins()].into_boxed_slice();
         let mut this = Self {
             alpha,
             bits_per_key,
@@ -98,28 +94,23 @@ impl<const MODE: kphf::Mode, const K: usize> KphfSet<MODE, K> {
     #[inline(always)]
     fn insert(&mut self, key: T) {
         if key == 0 {
-            self.len += !self.has_zero as usize;
+            assert!(!self.has_zero);
+            self.len += 1;
             self.has_zero = true;
             return;
         }
 
         let keys = S::splat(key as _);
 
-        let mut bin_idx = self.bin_idx(key);
-        loop {
-            let bin = &mut self.table[bin_idx];
-            if bin.contains(keys) {
-                return;
-            }
-            if bin.has_zero() {
-                bin.insert(key);
-                self.len += 1;
-                return;
-            } else {
-                bin_idx += 1;
-                continue;
-            }
-        }
+        let bin_idx = self.bin_idx(key);
+        let bin = &mut self.table[bin_idx];
+        assert!(!bin.contains(keys));
+        assert!(
+            bin.has_zero(),
+            "Trying to insert {key:?} but bin {bin_idx} is already full."
+        );
+        bin.insert(key);
+        self.len += 1;
     }
 
     pub fn test(&self) {
