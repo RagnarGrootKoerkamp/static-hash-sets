@@ -1,6 +1,7 @@
 #![allow(unused)]
-#![feature(impl_trait_in_assoc_type, widening_mul)]
+#![feature(impl_trait_in_assoc_type, widening_mul, explicit_tail_calls)]
 
+pub mod cuckoo;
 mod static_hashset;
 mod traits;
 mod u64_hashset;
