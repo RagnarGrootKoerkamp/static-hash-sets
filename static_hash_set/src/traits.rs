@@ -10,12 +10,12 @@ pub trait HashSet: Send + Sync {
         false
     }
     fn prefetch(&self, _key: T) {}
-    fn get(&self, key: T) -> bool;
+    fn contains(&self, key: T) -> bool;
     fn count_latency(&self, keys: &[T]) -> usize {
         let mut c = 0;
         let mut x = 0;
         for &key in keys {
-            c += self.get(key ^ x) as usize;
+            c += self.contains(key ^ x) as usize;
             x = std::hint::black_box(c as u64 * 0);
         }
         std::hint::black_box(c);
@@ -24,7 +24,7 @@ pub trait HashSet: Send + Sync {
     fn count_loop(&self, keys: &[T]) -> usize {
         let mut c = 0;
         for &key in keys {
-            c += self.get(key) as usize;
+            c += self.contains(key) as usize;
         }
         std::hint::black_box(c);
         c
@@ -34,7 +34,7 @@ pub trait HashSet: Send + Sync {
         let mut c = 0;
         for i in 0..keys.len().saturating_sub(lookahead) {
             self.prefetch(keys[i + lookahead]);
-            c += self.get(keys[i]) as usize;
+            c += self.contains(keys[i]) as usize;
         }
         std::hint::black_box(c);
         c
@@ -56,7 +56,7 @@ impl HashSet for hashbrown::HashSet<T, FxBuildHasher> {
         self.allocation_size()
     }
     #[inline(always)]
-    fn get(&self, key: T) -> bool {
+    fn contains(&self, key: T) -> bool {
         self.contains(&key)
     }
 }
@@ -77,7 +77,7 @@ impl HashSet for fastbloom::BloomFilter<FxBuildHasher> {
         0
     }
     #[inline(always)]
-    fn get(&self, key: T) -> bool {
+    fn contains(&self, key: T) -> bool {
         self.contains(&key)
     }
 }
@@ -97,54 +97,7 @@ impl HashSet for cuckoofilter::CuckooFilter<FxHasher> {
         0
     }
     #[inline(always)]
-    fn get(&self, key: T) -> bool {
+    fn contains(&self, key: T) -> bool {
         self.contains(&key)
-    }
-}
-
-impl HashSet for U64HashSet {
-    fn name(&self) -> &'static str {
-        "U64HashSet"
-    }
-    fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = U64HashSet::new(self.slot_ratio, keys);
-        Box::new(h)
-    }
-    fn allocation_size(&self) -> usize {
-        self.allocation_size()
-    }
-    fn has_prefetch(&self) -> bool {
-        true
-    }
-    fn prefetch(&self, key: T) {
-        U64HashSet::prefetch(self, key)
-    }
-    #[inline(always)]
-    fn get(&self, key: T) -> bool {
-        self.contains(key)
-    }
-}
-
-impl HashSet for StaticHashSet {
-    fn name(&self) -> &'static str {
-        "StaticHashSet"
-    }
-    fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = StaticHashSet::new(self.slot_ratio, self.meta_ratio, keys);
-        Box::new(h)
-    }
-    fn allocation_size(&self) -> usize {
-        self.allocation_size()
-    }
-    fn has_prefetch(&self) -> bool {
-        true
-    }
-    #[inline(always)]
-    fn prefetch(&self, key: T) {
-        StaticHashSet::prefetch(self, key)
-    }
-    #[inline(always)]
-    fn get(&self, key: T) -> bool {
-        self.contains(key)
     }
 }

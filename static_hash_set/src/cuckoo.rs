@@ -224,7 +224,7 @@ impl<const MODE: Mode> HashSet for CuckooSet<MODE> {
         self.prefetch(key)
     }
     #[inline(always)]
-    fn get(&self, key: T) -> bool {
+    fn contains(&self, key: T) -> bool {
         self.contains(key)
     }
 }

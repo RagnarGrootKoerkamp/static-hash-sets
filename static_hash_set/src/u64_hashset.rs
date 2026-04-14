@@ -9,6 +9,7 @@ use std::hash::{BuildHasher, BuildHasherDefault};
 use wide::CmpEq;
 
 use super::BIN_SIZE;
+use crate::traits::HashSet;
 use crate::S;
 use crate::T;
 
@@ -174,5 +175,28 @@ impl U64HashSet {
         for x in self {
             assert!(self.contains(x));
         }
+    }
+}
+
+impl HashSet for U64HashSet {
+    fn name(&self) -> &'static str {
+        "U64HashSet"
+    }
+    fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
+        let h = U64HashSet::new(self.slot_ratio, keys);
+        Box::new(h)
+    }
+    fn allocation_size(&self) -> usize {
+        self.allocation_size()
+    }
+    fn has_prefetch(&self) -> bool {
+        true
+    }
+    fn prefetch(&self, key: T) {
+        U64HashSet::prefetch(self, key)
+    }
+    #[inline(always)]
+    fn contains(&self, key: T) -> bool {
+        self.contains(key)
     }
 }
