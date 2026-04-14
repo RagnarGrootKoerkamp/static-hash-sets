@@ -28,7 +28,6 @@ pub struct U64HashSet {
     hits: usize,
     skips: usize,
     skips2: usize,
-    probelen: FxHashMap<usize, usize>,
     last_b: usize,
     last_j: usize,
     last_empty: usize,
@@ -45,13 +44,7 @@ impl IntoIterator for &U64HashSet {
         std::iter::repeat_n(0, self.has_zero as usize).chain(
             self.table
                 .iter()
-                .enumerate()
-                .flat_map(|(i, b)| {
-                    if i < 5 {
-                        eprintln!("bucket {i}")
-                    };
-                    b.0.iter().copied()
-                })
+                .flat_map(|b| b.0.iter().copied())
                 .filter(|x| *x != 0),
         )
     }
@@ -72,19 +65,17 @@ impl U64HashSet {
     fn with_capacity(slot_ratio: f32, n: usize) -> Self {
         let capacity = (n as f32 * slot_ratio).ceil() as usize;
         // TODO: integer overflow...
-        let buckets = capacity.div_ceil(BUCKET_SIZE);
-        // eprintln!("#buckets: {buckets}, with padding {}", buckets + PADDING);
-        let table = vec![Bucket([0 as T; BUCKET_SIZE]); buckets + PADDING].into_boxed_slice();
+        let num_buckets = capacity.div_ceil(BUCKET_SIZE);
+        let table = vec![Bucket([0 as T; BUCKET_SIZE]); num_buckets + PADDING].into_boxed_slice();
         Self {
             slot_ratio,
-            buckets,
+            buckets: num_buckets,
             table,
             len: 0,
             has_zero: false,
             hits: 0,
             skips: 0,
             skips2: 0,
-            probelen: Default::default(),
             last_b: 0,
             last_j: 0,
             last_empty: 0,
@@ -152,11 +143,6 @@ impl U64HashSet {
         eprintln!("sum {sum}");
         eprintln!("avg {}", sum as f32 / cnt as f32);
 
-        let mut probes: Vec<(_, _)> = self.probelen.iter().collect();
-        probes.sort();
-        for (len, count) in probes {
-            eprintln!("{len:>4} => {count:>9}");
-        }
         self.test();
     }
 
@@ -263,9 +249,6 @@ impl U64HashSet {
         self.hits += 1;
         self.skips += self.last_b - bucket_i;
         self.skips2 += (self.last_b - bucket_i).pow(2);
-        // if self.len % (1024 * 1024) == 0 {
-        //     eprintln!("elem {}: {} => {} of {}", self.len, bucket_i, self.last_b, self.buckets);
-        // }
         self.table[self.last_b].0[self.last_j] = key;
     }
 
