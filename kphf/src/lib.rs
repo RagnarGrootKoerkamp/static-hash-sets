@@ -1,6 +1,8 @@
 #![allow(incomplete_features)]
 #![feature(widening_mul, adt_const_params, generic_const_exprs)]
 
+use std::fmt::Debug;
+
 pub trait KphfT {
     fn name(&self) -> &'static str;
     fn new(&self, keys: &[u32]) -> Self;
@@ -15,7 +17,7 @@ fn mul(a: usize, b: usize) -> usize {
     a.widening_mul(b).1
 }
 
-pub trait Key: Copy + Ord + std::hash::Hash + std::ops::BitXor<Output = Self> {
+pub trait Key: Copy + Ord + std::hash::Hash + std::ops::BitXor<Output = Self> + Debug {
     const SALT: Self;
     fn from_seed(seed: u64) -> Self;
 }
@@ -59,12 +61,18 @@ pub enum Mode {
     Linear,
     /// Process buckets left to right, and allow bumping
     LinearBump,
+    /// Process buckets left to right, and allow bumping. Always take first working seed.
+    LinearBumpGreedy,
     /// Process buckets large to small
     Sort,
     /// Process buckets large to small, and allow bumping
     SortBump,
+    /// Process buckets large to small, and allow bumping. Always take first working seed.
+    SortBumpGreedy,
     /// Process buckets left to right, and backtrack
     Consensus,
+    /// Process buckets left to right, and backtrack. Always take first working seed.
+    ConsensusGreedy,
 }
 
 /// Information-theoretic lower bound on bits/key for a static hash function
@@ -139,9 +147,16 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
     fn build<T: Key>(&mut self, keys: &[T]) -> Option<()> {
         let start = std::time::Instant::now();
-        let sort = matches!(MODE, Mode::Sort | Mode::SortBump);
-        let consensus = matches!(MODE, Mode::Consensus);
-        let bump = matches!(MODE, Mode::LinearBump | Mode::SortBump);
+        let sort = matches!(MODE, Mode::Sort | Mode::SortBump | Mode::SortBumpGreedy);
+        let consensus = matches!(MODE, Mode::Consensus | Mode::ConsensusGreedy);
+        let bump = matches!(
+            MODE,
+            Mode::LinearBump | Mode::SortBump | Mode::LinearBumpGreedy | Mode::SortBumpGreedy
+        );
+        let greedy = matches!(
+            MODE,
+            Mode::LinearBumpGreedy | Mode::SortBumpGreedy | Mode::ConsensusGreedy
+        );
 
         let n = self.n;
 
@@ -252,6 +267,9 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     let bi = self.to_bin(key, seed_offset + seed as u64);
                     bin_sizes[bi] -= 1;
                 }
+                if greedy && collisions == 0 && (!consensus || tries[i] < vals.len() as u8) {
+                    break;
+                }
             }
             vals.sort_by(|x, y| x.partial_cmp(y).unwrap());
             let best = vals[tries[i] as usize];
@@ -328,6 +346,10 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         self.seeds = seeds;
         if bumped > 0 {
+            log::warn!(
+                "Bumping {bumped} keys = {:>.1}%",
+                bumped as f32 / n as f32 * 100.0
+            );
             self.bumped = Some(Box::new(Self::new::<T>(
                 // use a lazy load factor for fallback
                 0.5,
@@ -339,8 +361,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         Some(())
     }
 
-    pub fn bins(&self) -> usize {
-        self.num_bins + self.bumped.as_ref().map_or(0, |b| b.bins())
+    pub fn num_bins(&self) -> usize {
+        self.num_bins + self.bumped.as_ref().map_or(0, |b| b.num_bins())
     }
 
     pub fn bits_used(&self) -> usize {
@@ -359,7 +381,11 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         } else {
             unsafe { *self.seeds.get_unchecked(part + 7) as u64 }
         };
-        if matches!(MODE, Mode::LinearBump | Mode::SortBump) && seed == 255 {
+        if matches!(
+            MODE,
+            Mode::LinearBump | Mode::SortBump | Mode::LinearBumpGreedy | Mode::SortBumpGreedy
+        ) && seed == 255
+        {
             self.num_bins + self.bumped.as_ref().unwrap().get(key)
         } else {
             self.to_bin(key, seed)
@@ -377,7 +403,7 @@ mod test {
         let Some(kphf) = KptrHash::<MODE, K>::new(alpha, bits_per_key, keys) else {
             return;
         };
-        let mut cnt = vec![0; kphf.bins()];
+        let mut cnt = vec![0; kphf.num_bins()];
         for key in keys {
             let bi = kphf.get(*key);
             cnt[bi] += 1;

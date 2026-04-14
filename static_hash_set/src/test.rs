@@ -23,9 +23,14 @@ fn test() {
             2.0 * space_lower_bound(BIN_SIZE, 0.9),
             &[],
         )) as Box<dyn HashSet>,
+        Box::new(KphfSet::<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>::new(
+            0.9,
+            2.0 * space_lower_bound(BIN_SIZE, 0.9),
+            &[],
+        )) as Box<dyn HashSet>,
     ];
 
-    for n in [100_000] {
+    for n in [100_000, 1_000_000] {
         let keys = (0..n as u64).collect::<Vec<_>>();
         for hasher in &hashers {
             eprintln!("Test {}", hasher.name());

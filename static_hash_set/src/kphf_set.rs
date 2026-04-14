@@ -132,11 +132,14 @@ impl<const MODE: kphf::Mode, const K: usize> KphfSet<MODE, K> {
 impl<const MODE: kphf::Mode, const K: usize> HashSet for KphfSet<MODE, K> {
     fn name(&self) -> &'static str {
         match MODE {
-            kphf::Mode::Consensus => "KphfSet<Consensus>",
             kphf::Mode::Linear => "KphfSet<Linear>",
             kphf::Mode::LinearBump => "KphfSet<LinearBump>",
+            kphf::Mode::LinearBumpGreedy => "KphfSet<LinearBumpGreedy>",
             kphf::Mode::Sort => "KphfSet<Sort>",
             kphf::Mode::SortBump => "KphfSet<SortBump>",
+            kphf::Mode::SortBumpGreedy => "KphfSet<SortBumpGreedy>",
+            kphf::Mode::Consensus => "KphfSet<Consensus>",
+            kphf::Mode::ConsensusGreedy => "KphfSet<ConsensusGreedy>",
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {

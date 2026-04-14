@@ -61,22 +61,27 @@ fn main() {
             2.0 * space_lower_bound(BIN_SIZE, 0.7),
             &[],
         )) as Box<dyn HashSet>,
-        Box::new(KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::new(
-            0.8,
-            2.0 * space_lower_bound(BIN_SIZE, 0.8),
-            &[],
-        )) as Box<dyn HashSet>,
         Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
             0.8,
             2.0 * space_lower_bound(BIN_SIZE, 0.8),
             &[],
         )) as Box<dyn HashSet>,
-        Box::new(KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::new(
+        Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
             0.9,
             2.0 * space_lower_bound(BIN_SIZE, 0.9),
             &[],
         )) as Box<dyn HashSet>,
-        Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
+        Box::new(KphfSet::<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>::new(
+            0.7,
+            2.0 * space_lower_bound(BIN_SIZE, 0.7),
+            &[],
+        )) as Box<dyn HashSet>,
+        Box::new(KphfSet::<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>::new(
+            0.8,
+            2.0 * space_lower_bound(BIN_SIZE, 0.8),
+            &[],
+        )) as Box<dyn HashSet>,
+        Box::new(KphfSet::<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>::new(
             0.9,
             2.0 * space_lower_bound(BIN_SIZE, 0.9),
             &[],

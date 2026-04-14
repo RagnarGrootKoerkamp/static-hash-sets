@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 fxhash = "0.2.1"
+log = "0.4.29"
 mem_dbg = "0.3.0"
 memsize = "0.1.4"
 rand = "0.9.2"

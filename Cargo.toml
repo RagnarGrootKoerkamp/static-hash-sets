@@ -1,3 +1,6 @@
 [workspace]
 members = ["kphf", "static_hash_set"]
 resolver = "3"
+
+[profile.release]
+debug = true
