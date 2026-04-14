@@ -15,7 +15,7 @@ use wide::CmpEq;
 use super::T;
 use crate::{BIN_SIZE, S};
 
-pub struct StaticHashSet<const PROBE: bool> {
+pub struct StaticHashSet {
     pub slot_ratio: f32,
     pub meta_ratio: f32,
     k: usize,
@@ -75,7 +75,7 @@ fn to_bin(key: T, seed: u64, b: usize) -> usize {
 #[repr(align(64))] // Cache line alignment
 struct Bucket([T; BIN_SIZE]);
 
-impl<const PROBE: bool> IntoIterator for &StaticHashSet<PROBE> {
+impl IntoIterator for &StaticHashSet {
     type Item = T;
 
     type IntoIter = impl Iterator<Item = T>;
@@ -96,7 +96,7 @@ impl<const PROBE: bool> IntoIterator for &StaticHashSet<PROBE> {
     }
 }
 
-impl<const PROBE: bool> StaticHashSet<PROBE> {
+impl StaticHashSet {
     pub fn new(slot_ratio: f32, meta_ratio: f32, keys: &[T]) -> Self {
         // eprintln!("building..");
         let k = BIN_SIZE;
@@ -185,9 +185,7 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
             }
         }
 
-        if !PROBE {
-            assert!(collisions.is_empty());
-        }
+        assert!(collisions.is_empty());
 
         // eprintln!("Collisions/elem:   {}", collisions.len() as f32 / n as f32);
         // Fix colliding keys.
@@ -328,32 +326,13 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
 
         let keys = S::splat(key as _);
 
-        let mut i = 1;
-        loop {
-            use std::mem::transmute;
-            // Safety: bucket_mask is correct because the number of buckets is a power of 2.
-            let bucket = unsafe { self.table.get_unchecked(bi) };
-            let [h1, h2]: [S; 2] = unsafe { transmute(bucket.0) };
-            let mask = (h1.cmp_eq(keys) | h2.cmp_eq(keys)).move_mask() as u8;
+        use std::mem::transmute;
+        // Safety: bucket_mask is correct because the number of buckets is a power of 2.
+        let bucket = unsafe { self.table.get_unchecked(bi) };
+        let [h1, h2]: [S; 2] = unsafe { transmute(bucket.0) };
+        let mask = (h1.cmp_eq(keys) | h2.cmp_eq(keys)).move_mask() as u8;
 
-            if !PROBE {
-                return mask > 0;
-            }
-
-            if mask > 0 {
-                // self.hits.fetch_add(1, Relaxed);
-                return true;
-            }
-            let has_zero = (h1.cmp_eq(S::ZERO) | h2.cmp_eq(S::ZERO)).move_mask() as u8;
-            if has_zero > 0 {
-                // self.none.fetch_add(1, Relaxed);
-                return false;
-            }
-
-            // self.skips.fetch_add(1, Relaxed);
-            bi += 1;
-            i += 1;
-        }
+        return mask > 0;
     }
 
     pub fn allocation_size(&self) -> usize {

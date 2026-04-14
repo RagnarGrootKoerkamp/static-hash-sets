@@ -113,12 +113,12 @@ impl HashSet for U64HashSet {
     }
 }
 
-impl<const PROBE: bool> HashSet for StaticHashSet<PROBE> {
+impl HashSet for StaticHashSet {
     fn name(&self) -> &'static str {
         "StaticHashSet"
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = StaticHashSet::<PROBE>::new(self.slot_ratio, self.meta_ratio, keys);
+        let h = StaticHashSet::new(self.slot_ratio, self.meta_ratio, keys);
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {
