@@ -5,9 +5,12 @@ import seaborn as sns
 import pandas as pd
 import math
 
-w = 32
+w = 64
+name = "64-cuckoo-2"
 
-data = pd.read_csv(f"out-{w}.csv")
+data = pd.read_csv(f"out-{name}.csv")
+
+data = data[data["metric"] >= "prefetch"]
 
 
 def make_category(row):
@@ -21,7 +24,12 @@ data["label"] = data.apply(
     lambda row: row["h"] + " (" + row["target_overhead"] + "x)", axis=1
 )
 
+queries = ["q01", "q10", "q50", "q90", "q99"]
+group_columns = ["h", "pf", "threads", "metric", "n", "target_overhead", "label"]
+data = data.groupby(group_columns, as_index=False)[["build", *queries]].median()
+
 labels = data["label"].unique()
+print(labels)
 palette = sns.color_palette(n_colors=len(labels))
 label_color = {
     "FxHashSet (1.4-2.8x)": "red",
@@ -29,6 +37,15 @@ label_color = {
     "U64HashSet (1.3x)": "green",
     "U64HashSet (1.2x)": "green",
     "U64HashSet (1.1x)": "green",
+    "CuckooSet<PrefetchOneLazy> (1.4x)": "orange",
+    "CuckooSet<PrefetchOneLazy> (1.2x)": "orange",
+    "CuckooSet<PrefetchOneLazy> (1.1x)": "orange",
+    "CuckooSet<PrefetchOneEager> (1.4x)": "brown",
+    "CuckooSet<PrefetchOneEager> (1.2x)": "brown",
+    "CuckooSet<PrefetchOneEager> (1.1x)": "brown",
+    "CuckooSet<PrefetchBoth> (1.4x)": "purple",
+    "CuckooSet<PrefetchBoth> (1.2x)": "purple",
+    "CuckooSet<PrefetchBoth> (1.1x)": "purple",
     "StaticHashSet (1.4x)": "blue",
     "StaticHashSet (1.2x)": "blue",
     "StaticHashSet (1.1x)": "blue",
@@ -39,6 +56,15 @@ label_lw = {
     "U64HashSet (1.3x)": 1.75,
     "U64HashSet (1.2x)": 1.5,
     "U64HashSet (1.1x)": 1,
+    "CuckooSet<PrefetchOneLazy> (1.4x)": 2,
+    "CuckooSet<PrefetchOneLazy> (1.2x)": 1.5,
+    "CuckooSet<PrefetchOneLazy> (1.1x)": 1,
+    "CuckooSet<PrefetchOneEager> (1.4x)": 2,
+    "CuckooSet<PrefetchOneEager> (1.2x)": 1.5,
+    "CuckooSet<PrefetchOneEager> (1.1x)": 1,
+    "CuckooSet<PrefetchBoth> (1.4x)": 2,
+    "CuckooSet<PrefetchBoth> (1.2x)": 1.5,
+    "CuckooSet<PrefetchBoth> (1.1x)": 1,
     "StaticHashSet (1.4x)": 2,
     "StaticHashSet (1.2x)": 1.5,
     "StaticHashSet (1.1x)": 1,
@@ -46,7 +72,6 @@ label_lw = {
 
 plt.close()
 
-queries = ["q01", "q10", "q50", "q90", "q99"]
 titles = ["p=0.01", "p=0.10", "p=0.50", "p=0.90", "p=0.99"]
 # thread_counts = sorted(data["threads"].unique())
 thread_counts = [1, 6, 12]
@@ -70,6 +95,8 @@ for ri, threads in enumerate(thread_counts):
                 x="n",
                 y=q,
                 ax=ax,
+                estimator=None,
+                errorbar=None,
                 color=label_color[label],
                 lw=label_lw[label],
                 label=label,
@@ -99,4 +126,4 @@ for ri, threads in enumerate(thread_counts):
 
 fig.suptitle(f"u{w} hashset query throughput")
 fig.tight_layout()
-fig.savefig(f"plot-{w}.png", bbox_inches="tight", dpi=300)
+fig.savefig(f"plot-{name}.png", bbox_inches="tight", dpi=300)
