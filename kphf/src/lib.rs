@@ -247,7 +247,17 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 seed_offset.to_be_bytes()
             );
 
-            for seed in 0..256_usize - if bump { 1 } else { 0 } {
+            'seed: for seed in 0..256_usize - if bump { 1 } else { 0 } {
+                // First check for collisions
+                for key in part {
+                    let bi = self.to_bin(*key, seed_offset + seed as u64);
+                    let s = bin_sizes[bi] as usize;
+                    if s == K {
+                        continue 'seed;
+                    }
+                }
+
+                // More refined check that considers within-bucket collisions.
                 let mut counts = vec![0; K];
                 let mut collisions = 0;
                 let mut set = 0;
