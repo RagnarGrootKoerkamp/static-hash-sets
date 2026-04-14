@@ -13,7 +13,7 @@ use std::mem::transmute;
 use wide::CmpEq;
 
 use super::T;
-use crate::{BUCKET_SIZE, S};
+use crate::{BIN_SIZE, S};
 
 pub struct StaticHashSet<const PROBE: bool> {
     pub slot_ratio: f32,
@@ -73,7 +73,7 @@ fn to_bin(key: T, seed: u64, b: usize) -> usize {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(align(64))] // Cache line alignment
-struct Bucket([T; BUCKET_SIZE]);
+struct Bucket([T; BIN_SIZE]);
 
 impl<const PROBE: bool> IntoIterator for &StaticHashSet<PROBE> {
     type Item = T;
@@ -99,7 +99,7 @@ impl<const PROBE: bool> IntoIterator for &StaticHashSet<PROBE> {
 impl<const PROBE: bool> StaticHashSet<PROBE> {
     pub fn new(slot_ratio: f32, meta_ratio: f32, keys: &[T]) -> Self {
         // eprintln!("building..");
-        let k = BUCKET_SIZE;
+        let k = BIN_SIZE;
         let s = 8;
         let n = keys.len();
         // buckets
@@ -130,7 +130,7 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
         perm.sort_by_key(|&i| std::cmp::Reverse(part_sizes[i]));
 
         // 4. init buckets
-        let mut table = vec![Bucket([0; BUCKET_SIZE]); b + PADDING].into_boxed_slice();
+        let mut table = vec![Bucket([0; BIN_SIZE]); b + PADDING].into_boxed_slice();
         let mut seeds = vec![0u8; p];
         // eprintln!();
         // eprintln!("Size of table: {}", std::mem::size_of_val(&*table));
@@ -286,7 +286,7 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
             let [h1, h2]: &[S; 2] = unsafe { transmute(&bucket.0) };
             let c0 = h1.cmp_eq(S::ZERO).move_mask().count_ones() as usize;
             let c1 = h2.cmp_eq(S::ZERO).move_mask().count_ones() as usize;
-            let elems = BUCKET_SIZE - c0 - c1;
+            let elems = BIN_SIZE - c0 - c1;
             counts[elems] += 1;
             cnt += 1;
             sum += elems;
@@ -295,7 +295,7 @@ impl<const PROBE: bool> StaticHashSet<PROBE> {
             eprintln!("{i}: {:>9}", counts[i]);
         }
         eprintln!("buckets {cnt}");
-        eprintln!("slots   {}", cnt * BUCKET_SIZE);
+        eprintln!("slots   {}", cnt * BIN_SIZE);
         eprintln!("sum {sum}");
         eprintln!("avg {}", sum as f32 / cnt as f32);
 

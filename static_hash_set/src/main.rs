@@ -26,7 +26,7 @@ type FxHasher = BuildHasherDefault<fxhash::FxHasher>;
 // const BUCKET_SIZE: usize = 16;
 // type S = wide::i32x8;
 type T = u64;
-const BUCKET_SIZE: usize = 8;
+const BIN_SIZE: usize = 8;
 type S = wide::i64x4;
 
 fn gen_keys(n: usize) -> Vec<T> {

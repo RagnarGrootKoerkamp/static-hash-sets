@@ -1105,6 +1105,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "prefetch-index"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebb824f21ee853524f9f04d24a8d2127de8a371ece8777ce848be7b49ccfd49f"
+
+[[package]]
 name = "proc-macro-error-attr2"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1414,6 +1420,7 @@ dependencies = [
  "hashbrown",
  "mem_dbg",
  "memsize",
+ "prefetch-index",
  "rand 0.9.2",
  "rustc-hash",
  "sux",

@@ -10,6 +10,7 @@ fxhash = "0.2.1"
 hashbrown = "0.16.0"
 mem_dbg = { version = "0.3.0", features = ["derive"] }
 memsize = "0.1.4"
+prefetch-index = "0.2.0"
 rand = "0.9.2"
 rustc-hash = "2.1.1"
 sux = "0.8.0"

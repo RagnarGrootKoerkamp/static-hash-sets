@@ -13,7 +13,7 @@ use std::mem::transmute;
 use rustc_hash::FxHashMap;
 use wide::CmpEq;
 
-use super::BUCKET_SIZE;
+use super::BIN_SIZE;
 use crate::S;
 use crate::T;
 
@@ -21,16 +21,10 @@ type Hasher = BuildHasherDefault<rustc_hash::FxHasher>;
 
 pub struct U64HashSet {
     pub slot_ratio: f32,
-    buckets: usize,
-    table: Box<[Bucket]>,
+    num_bins: usize,
+    table: Box<[Bin]>,
     len: usize,
     has_zero: bool,
-    hits: usize,
-    skips: usize,
-    skips2: usize,
-    last_b: usize,
-    last_j: usize,
-    last_empty: usize,
 }
 
 const PADDING: usize = 1000;
@@ -52,7 +46,39 @@ impl IntoIterator for &U64HashSet {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(align(64))] // Cache line alignment
-struct Bucket([T; BUCKET_SIZE]);
+pub(crate) struct Bin(pub [T; BIN_SIZE]);
+
+impl Bin {
+    /// Check if SIMD-splatted key non-zero key is present in bin.
+    #[inline(always)]
+    pub fn contains(&self, keys: S) -> bool {
+        let [h1, h2]: [S; 2] = unsafe { std::mem::transmute(*self) };
+        (h1.cmp_eq(keys) | h2.cmp_eq(keys)).move_mask() > 0
+    }
+    /// Check if the bin contains a 0 entry.
+    #[inline(always)]
+    pub fn has_zero(&self) -> bool {
+        let [h1, h2]: [S; 2] = unsafe { std::mem::transmute(*self) };
+        (h1.cmp_eq(S::ZERO) | h2.cmp_eq(S::ZERO)).move_mask() > 0
+    }
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        let [h1, h2]: [S; 2] = unsafe { std::mem::transmute(*self) };
+        BIN_SIZE
+            - (h1.cmp_eq(S::ZERO).move_mask().count_ones()
+                + h2.cmp_eq(S::ZERO).move_mask().count_ones()) as usize
+    }
+    #[inline(always)]
+    pub fn insert(&mut self, key: T) {
+        let [h1, h2]: [S; 2] = unsafe { std::mem::transmute(*self) };
+        let idx = self.len();
+        assert_eq!(
+            self.0[idx], 0,
+            "inserting {key} at idx {idx} with bin size {BIN_SIZE}"
+        );
+        self.0[idx] = key;
+    }
+}
 
 impl U64HashSet {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
@@ -64,21 +90,14 @@ impl U64HashSet {
     }
     fn with_capacity(slot_ratio: f32, n: usize) -> Self {
         let capacity = (n as f32 * slot_ratio).ceil() as usize;
-        // TODO: integer overflow...
-        let num_buckets = capacity.div_ceil(BUCKET_SIZE);
-        let table = vec![Bucket([0 as T; BUCKET_SIZE]); num_buckets + PADDING].into_boxed_slice();
+        let num_bins = capacity.div_ceil(BIN_SIZE);
+        let table = vec![Bin([0 as T; BIN_SIZE]); num_bins + PADDING].into_boxed_slice();
         Self {
             slot_ratio,
-            buckets: num_buckets,
+            num_bins,
             table,
             len: 0,
             has_zero: false,
-            hits: 0,
-            skips: 0,
-            skips2: 0,
-            last_b: 0,
-            last_j: 0,
-            last_empty: 0,
         }
     }
 
@@ -91,71 +110,26 @@ impl U64HashSet {
         self.len + self.has_zero as usize
     }
 
-    pub fn test(&self) {
-        for x in self {
-            if !self.contains(x) {
-                eprintln!("Did not find {x}!");
-                let hash64 = Hasher::default().hash_one(x);
-                let bucket_i = (hash64 as usize).widening_mul(self.buckets).1;
-
-                let [h1, h2]: &[S; 2] = unsafe { transmute(&self.table[bucket_i]) };
-                let c0 = h1.cmp_eq(S::ZERO).move_mask().count_ones() as usize;
-                let c1 = h2.cmp_eq(S::ZERO).move_mask().count_ones() as usize;
-                let elems = BUCKET_SIZE - c0 - c1;
-                eprintln!("Intended bucket {bucket_i} of size {elems}");
-                let flat = unsafe { self.table.align_to::<T>().1 };
-                let pos = flat.iter().position(|y| *y == x);
-                eprintln!("Found at {pos:?}");
-                if let Some(p) = pos {
-                    let bucket = p / BUCKET_SIZE;
-                    eprintln!("Actual bucket {bucket}");
-                }
-
-                panic!();
-            }
-        }
+    #[inline(always)]
+    fn bin_idx(&self, key: T) -> usize {
+        let hash64 = Hasher::default().hash_one(key);
+        (hash64 as usize).widening_mul(self.num_bins).1
     }
 
-    pub fn stats(&self) {
-        let mut counts = [0; 9];
+    #[inline(always)]
+    fn get_bin(&self, idx: usize) -> &Bin {
+        unsafe { self.table.get_unchecked(idx) }
+    }
 
-        eprintln!("Size    : {}", self.len);
-        eprintln!("hits    : {}", self.hits);
-        eprintln!("Skips   : {}", self.skips);
-        eprintln!("Skips/el: {}", self.skips as f32 / self.hits as f32);
-        eprintln!("Skips2/el {}", self.skips2 as f32 / self.hits as f32);
-        // return;
-
-        let mut sum = 0;
-        let mut cnt = 0;
-        for bucket in &self.table {
-            let [h1, h2]: &[S; 2] = unsafe { transmute(&bucket.0) };
-            let c0 = h1.cmp_eq(S::ZERO).move_mask().count_ones() as usize;
-            let c1 = h2.cmp_eq(S::ZERO).move_mask().count_ones() as usize;
-            let elems = BUCKET_SIZE - c0 - c1;
-            counts[elems] += 1;
-        }
-        for i in 0..=8 {
-            eprintln!("{i}: {:>9}", counts[i]);
-        }
-        eprintln!("buckets {cnt}");
-        eprintln!("slots   {}", cnt * BUCKET_SIZE);
-        eprintln!("sum {sum}");
-        eprintln!("avg {}", sum as f32 / cnt as f32);
-
-        self.test();
+    #[inline(always)]
+    fn get_bin_mut(&mut self, idx: usize) -> &mut Bin {
+        unsafe { self.table.get_unchecked_mut(idx) }
     }
 
     #[inline(always)]
     pub fn prefetch(&self, key: T) {
-        let hash64 = Hasher::default().hash_one(key);
-        let bucket_i = (hash64 as usize).widening_mul(self.buckets).1;
-        // Safety: bucket_mask is correct because the number of buckets is a power of 2.
-        unsafe {
-            _mm_prefetch::<_MM_HINT_T0>(
-                self.table.get_unchecked(bucket_i) as *const Bucket as *const i8
-            );
-        }
+        let bin_idx = self.bin_idx(key);
+        prefetch_index::prefetch_index(&self.table, bin_idx);
     }
 
     #[inline(always)]
@@ -163,28 +137,20 @@ impl U64HashSet {
         if key == 0 {
             return self.has_zero;
         }
-        let hash64 = Hasher::default().hash_one(key);
-        let mut bucket_i = (hash64 as usize).widening_mul(self.buckets).1;
 
         let keys = S::splat(key as _);
 
-        let mut i = 1;
+        let mut bin_idx = self.bin_idx(key);
         loop {
-            use std::mem::transmute;
-            // Safety: bucket_mask is correct because the number of buckets is a power of 2.
-            let bucket = unsafe { self.table.get_unchecked(bucket_i) };
-            let [h1, h2]: [S; 2] = unsafe { transmute(bucket.0) };
-            let has_key = (h1.cmp_eq(keys) | h2.cmp_eq(keys)).move_mask() as u8;
-            if has_key > 0 {
+            let bin = self.get_bin(bin_idx);
+            if bin.contains(keys) {
                 return true;
             }
-            let has_zero = (h1.cmp_eq(S::ZERO) | h2.cmp_eq(S::ZERO)).move_mask() as u8;
-            if has_zero > 0 {
+            if bin.has_zero() {
                 return false;
             }
 
-            bucket_i += 1;
-            i += 1;
+            bin_idx += 1;
         }
     }
 
@@ -195,85 +161,29 @@ impl U64HashSet {
             self.has_zero = true;
             return;
         }
-        let hash64 = Hasher::default().hash_one(key);
-        let mut bucket_i = (hash64 as usize).widening_mul(self.buckets).1;
 
         let keys = S::splat(key as _);
 
-        let mut i = 1;
+        let mut bin_idx = self.bin_idx(key);
         loop {
-            // Safety: bucket_mask is correct because the number of buckets is a power of 2.
-            let bucket = &mut self.table[bucket_i];
-            let [h1, h2]: &[S; 2] = unsafe { transmute(&bucket.0) };
-
-            let has_key = (h1.cmp_eq(keys) | h2.cmp_eq(keys)).move_mask() as u8;
-            if has_key > 0 {
+            let bin = &mut self.table[bin_idx];
+            if bin.contains(keys) {
                 return;
             }
-
-            let c0 = h1.cmp_eq(S::ZERO).move_mask().count_ones() as usize;
-            let c1 = h2.cmp_eq(S::ZERO).move_mask().count_ones() as usize;
-            let taken = BUCKET_SIZE - c0 - c1;
-
-            if taken < BUCKET_SIZE {
-                let element_i = taken;
-                let element = &mut bucket.0[element_i];
-                debug_assert!(*element == 0);
-                *element = key;
-                self.hits += 1;
+            if bin.has_zero() {
+                bin.insert(key);
                 self.len += 1;
                 return;
+            } else {
+                bin_idx += 1;
+                continue;
             }
-
-            bucket_i += 1;
-            i += 1;
-            self.skips += 1;
         }
     }
 
-    #[inline(always)]
-    pub fn insert_in_order(&mut self, key: T) {
-        self.len += 1;
-        assert!(self.len <= self.buckets * BUCKET_SIZE);
-        if key == 0 {
-            self.has_zero = true;
-            return;
-        }
-        let hash64 = Hasher::default().hash_one(key);
-        let bucket_i = (hash64 as usize).widening_mul(self.buckets).1;
-        // same bucket?
-        self.last_j = select_unpredictable(bucket_i > self.last_b, 0, self.last_j + 1);
-        self.last_b = self.last_b.max(bucket_i);
-        self.last_b += self.last_j >> 3;
-        self.last_j &= 7;
-        self.hits += 1;
-        self.skips += self.last_b - bucket_i;
-        self.skips2 += (self.last_b - bucket_i).pow(2);
-        self.table[self.last_b].0[self.last_j] = key;
-    }
-
-    pub fn stabilize(&self) -> Self {
-        let mut i = 0;
-        loop {
-            let mut new = Self::with_capacity(self.slot_ratio, self.len);
-            let start = std::time::Instant::now();
-            eprintln!("Self:");
-            for x in (&self).into_iter().take(20) {
-                eprintln!("{x}");
-            }
-            for x in self {
-                new.insert_in_order(x);
-            }
-            eprintln!("New:");
-            for x in (&new).into_iter().take(20) {
-                eprintln!("{x}");
-            }
-            eprintln!("{i:>2}: Re-build took {:?}", start.elapsed());
-            i += 1;
-            if self.table == new.table {
-                eprintln!("DONe");
-                return new;
-            }
+    pub fn test(&self) {
+        for x in self {
+            assert!(self.contains(x));
         }
     }
 }
