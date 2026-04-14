@@ -26,7 +26,7 @@ data["label"] = data.apply(
     lambda row: row["h"] + " (" + row["target_overhead"] + "x)", axis=1
 )
 
-queries = ["q01", "q10", "q50", "q90", "q99"]
+queries = ["q01", "q50", "q99"]
 group_columns = ["h", "pf", "threads", "metric", "n", "target_overhead", "label"]
 data = data.groupby(group_columns, as_index=False)[["build", *queries]].median()
 
@@ -48,15 +48,15 @@ label_color = {
     "CuckooSet<PrefetchBoth> (1.4x)": "white",
     "CuckooSet<PrefetchBoth> (1.2x)": "white",
     "CuckooSet<PrefetchBoth> (1.1x)": "white",
-    "KphfSet<Sort> (1.4x)": "blue",
-    "KphfSet<Sort> (1.2x)": "blue",
-    "KphfSet<Sort> (1.1x)": "blue",
-    "KphfSet<SortBump> (1.4x)": "lightblue",
-    "KphfSet<SortBump> (1.2x)": "lightblue",
-    "KphfSet<SortBump> (1.1x)": "lightblue",
+    "KphfSet<SortBump> (1.4x)": "blue",
+    "KphfSet<SortBump> (1.2x)": "blue",
+    "KphfSet<SortBump> (1.1x)": "blue",
+    "KphfSet<SortBumpGreedy> (1.4x)": "cyan",
+    "KphfSet<SortBumpGreedy> (1.2x)": "cyan",
+    "KphfSet<SortBumpGreedy> (1.1x)": "cyan",
 }
 label_lw = {
-    "FxHashSet (1.4-2.8x)": 2.5,
+    "FxHashSet (1.4-2.8x)": 2,
     "U64HashSet (1.4x)": 2,
     "U64HashSet (1.3x)": 1.75,
     "U64HashSet (1.2x)": 1.5,
@@ -70,19 +70,24 @@ label_lw = {
     "CuckooSet<PrefetchBoth> (1.4x)": 2,
     "CuckooSet<PrefetchBoth> (1.2x)": 1.5,
     "CuckooSet<PrefetchBoth> (1.1x)": 1,
-    "KphfSet<Sort> (1.4x)": 2,
-    "KphfSet<Sort> (1.2x)": 1.5,
-    "KphfSet<Sort> (1.1x)": 1,
     "KphfSet<SortBump> (1.4x)": 2,
     "KphfSet<SortBump> (1.2x)": 1.5,
     "KphfSet<SortBump> (1.1x)": 1,
+    "KphfSet<SortBumpGreedy> (1.4x)": 2,
+    "KphfSet<SortBumpGreedy> (1.2x)": 1.5,
+    "KphfSet<SortBumpGreedy> (1.1x)": 1,
 }
 
 plt.close()
 
-titles = ["p=0.01", "p=0.10", "p=0.50", "p=0.90", "p=0.99"]
+titles = ["p=0.01", "p=0.50", "p=0.99"]
 # thread_counts = sorted(data["threads"].unique())
 thread_counts = [1, 6, 12]
+target_latencies = {
+    1: 7.5,
+    6: 2.5,
+    12: 2.5,
+}
 sizes = [12 * 1024 * 1024]
 cache_labels = ["L3  ", "  RAM"]
 
@@ -116,6 +121,7 @@ for ri, threads in enumerate(thread_counts):
         ax.set_ylim(0, 60 / threads)
         ax.set_xscale("log", base=2)
         ax.grid(True, which="both", ls="--", lw=0.5)
+        ax.axhline(y=target_latencies[threads], color="red", lw=1, ls="--", zorder=0)
         for s, l in zip(sizes, cache_labels):
             ax.axvline(x=s / 4, c="black", lw=1, ls="--")
             ax.text(s / 4, ax.get_ylim()[0], l, ha="right", va="bottom", fontsize=8)
