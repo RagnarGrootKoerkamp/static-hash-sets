@@ -14,13 +14,21 @@ use rustc_hash::FxHashMap;
 use wide::CmpEq;
 
 use super::BIN_SIZE;
+use crate::traits::HashSet;
 use crate::u64_hashset::Bin;
 use crate::S;
 use crate::T;
 
 type Hasher = BuildHasherDefault<rustc_hash::FxHasher>;
 
-pub struct CuckooSet {
+#[derive(PartialEq, Eq, Debug, std::marker::ConstParamTy)]
+pub enum Mode {
+    PrefetchBoth,
+    PrefetchOneLazy,
+    PrefetchOneEager,
+}
+
+pub struct CuckooSet<const MODE: Mode> {
     pub slot_ratio: f32,
     num_bins: usize,
     table: Box<[Bin]>,
@@ -28,7 +36,7 @@ pub struct CuckooSet {
     has_zero: bool,
 }
 
-impl IntoIterator for &CuckooSet {
+impl<const MODE: Mode> IntoIterator for &CuckooSet<MODE> {
     type Item = T;
 
     type IntoIter = impl Iterator<Item = T>;
@@ -43,7 +51,7 @@ impl IntoIterator for &CuckooSet {
     }
 }
 
-impl CuckooSet {
+impl<const MODE: Mode> CuckooSet<MODE> {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
         for &k in keys {
@@ -111,6 +119,14 @@ impl CuckooSet {
         self.prefetch_first(key);
         self.prefetch_second(key);
     }
+    #[inline(always)]
+    pub fn prefetch(&self, key: T) {
+        match MODE {
+            Mode::PrefetchBoth => self.prefetch_both(key),
+            Mode::PrefetchOneLazy => self.prefetch_first(key),
+            Mode::PrefetchOneEager => self.prefetch_first(key),
+        }
+    }
 
     #[inline(always)]
     pub fn contains_lazy(&self, key: T) -> bool {
@@ -120,8 +136,14 @@ impl CuckooSet {
 
         let keys = S::splat(key as _);
 
-        self.get_bin(self.bin_idx_1(key)).contains(keys)
-            || self.get_bin(self.bin_idx_2(key)).contains(keys)
+        let bin1 = self.get_bin(self.bin_idx_1(key));
+        if bin1.contains(keys) {
+            return true;
+        }
+        if bin1.has_zero() {
+            return false;
+        }
+        self.get_bin(self.bin_idx_2(key)).contains(keys)
     }
 
     #[inline(always)]
@@ -134,6 +156,15 @@ impl CuckooSet {
 
         self.get_bin(self.bin_idx_1(key)).contains(keys)
             | self.get_bin(self.bin_idx_2(key)).contains(keys)
+    }
+
+    #[inline(always)]
+    pub fn contains(&self, key: T) -> bool {
+        match MODE {
+            Mode::PrefetchBoth => self.contains_eager(key),
+            Mode::PrefetchOneLazy => self.contains_lazy(key),
+            Mode::PrefetchOneEager => self.contains_eager(key),
+        }
     }
 
     #[inline(always)]
@@ -181,5 +212,33 @@ impl CuckooSet {
         for x in self {
             assert!(self.contains_eager(x));
         }
+    }
+}
+
+impl<const MODE: Mode> HashSet for CuckooSet<MODE> {
+    fn name(&self) -> &'static str {
+        match MODE {
+            Mode::PrefetchBoth => "CuckooSet<PrefetchBoth>",
+            Mode::PrefetchOneLazy => "CuckooSet<PrefetchOneLazy>",
+            Mode::PrefetchOneEager => "CuckooSet<PrefetchOneEager>",
+        }
+    }
+    fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
+        let h = CuckooSet::<MODE>::new(self.slot_ratio, keys);
+        Box::new(h)
+    }
+    fn allocation_size(&self) -> usize {
+        self.allocation_size()
+    }
+    fn has_prefetch(&self) -> bool {
+        true
+    }
+    #[inline(always)]
+    fn prefetch(&self, key: T) {
+        self.prefetch(key)
+    }
+    #[inline(always)]
+    fn get(&self, key: T) -> bool {
+        self.contains(key)
     }
 }

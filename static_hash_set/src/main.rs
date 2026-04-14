@@ -1,5 +1,10 @@
-#![allow(unused)]
-#![feature(impl_trait_in_assoc_type, widening_mul, explicit_tail_calls)]
+#![allow(unused, incomplete_features)]
+#![feature(
+    impl_trait_in_assoc_type,
+    widening_mul,
+    explicit_tail_calls,
+    adt_const_params
+)]
 
 pub mod cuckoo;
 mod static_hashset;
@@ -54,9 +59,17 @@ fn main() {
         //),
         //Box::new(cuckoofilter::CuckooFilter::<fxhash::FxHasher>::with_capacity(0)),
         Box::new(U64HashSet::new(1.4, &[])),
-        Box::new(U64HashSet::new(1.3, &[])),
         Box::new(U64HashSet::new(1.2, &[])),
         Box::new(U64HashSet::new(1.1, &[])),
+        Box::new(CuckooSet::<{ Mode::PrefetchBoth }>::new(1.4, &[])),
+        Box::new(CuckooSet::<{ Mode::PrefetchOneLazy }>::new(1.4, &[])),
+        Box::new(CuckooSet::<{ Mode::PrefetchOneEager }>::new(1.4, &[])),
+        Box::new(CuckooSet::<{ Mode::PrefetchBoth }>::new(1.2, &[])),
+        Box::new(CuckooSet::<{ Mode::PrefetchOneLazy }>::new(1.2, &[])),
+        Box::new(CuckooSet::<{ Mode::PrefetchOneEager }>::new(1.2, &[])),
+        Box::new(CuckooSet::<{ Mode::PrefetchBoth }>::new(1.1, &[])),
+        Box::new(CuckooSet::<{ Mode::PrefetchOneLazy }>::new(1.1, &[])),
+        Box::new(CuckooSet::<{ Mode::PrefetchOneEager }>::new(1.1, &[])),
         Box::new(StaticHashSet::new(1.4, 0.015, &[])) as Box<dyn HashSet>,
         Box::new(StaticHashSet::new(1.2, 0.030, &[])),
         Box::new(StaticHashSet::new(1.1, 0.060, &[])),
