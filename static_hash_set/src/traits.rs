@@ -1,8 +1,4 @@
-use fxhash::{FxBuildHasher, FxHashSet, FxHasher};
-use hashbrown::DefaultHashBuilder;
-use mem_dbg::{MemSize, SizeFlags};
-use rand::seq::IndexedRandom;
-use sux::dict::EliasFanoBuilder;
+use fxhash::{FxBuildHasher, FxHasher};
 
 use crate::{static_hashset::StaticHashSet, u64_hashset::U64HashSet};
 
@@ -15,7 +11,7 @@ pub trait HashSet: Send + Sync {
     fn has_prefetch(&self) -> bool {
         false
     }
-    fn prefetch(&self, key: T) {}
+    fn prefetch(&self, _key: T) {}
     fn get(&self, key: T) -> bool;
     fn count(&self, keys: &[T]) -> usize {
         let lookahead = 32;
@@ -54,7 +50,7 @@ impl HashSet for fastbloom::BloomFilter<FxBuildHasher> {
         "BloomFilter"
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let mut h = fastbloom::BloomFilter::with_false_pos(0.01)
+        let h = fastbloom::BloomFilter::with_false_pos(0.01)
             .hasher(FxBuildHasher::default())
             .items(keys.iter().copied());
         // eprintln!("\nBits/elem:  {}", h.num_bits() as f32 / keys.len() as f32);
@@ -95,7 +91,7 @@ impl HashSet for U64HashSet {
         "U64HashSet"
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let mut h = U64HashSet::new(self.slot_ratio, keys);
+        let h = U64HashSet::new(self.slot_ratio, keys);
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {

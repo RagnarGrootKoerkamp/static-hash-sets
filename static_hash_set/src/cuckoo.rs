@@ -5,13 +5,7 @@
 //! we may need to do longer probe sequences (each probe is 8 bytes, not 1 byte), but on the other hand we only take
 //! 1 cache miss per access, not 2.
 
-use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
 use std::hash::{BuildHasher, BuildHasherDefault};
-use std::hint::select_unpredictable;
-use std::mem::transmute;
-
-use rustc_hash::FxHashMap;
-use wide::CmpEq;
 
 use super::BIN_SIZE;
 use crate::traits::HashSet;
@@ -100,11 +94,6 @@ impl<const MODE: Mode> CuckooSet<MODE> {
     }
 
     #[inline(always)]
-    fn get_bin_mut(&mut self, idx: usize) -> &mut Bin {
-        unsafe { self.table.get_unchecked_mut(idx) }
-    }
-
-    #[inline(always)]
     pub fn prefetch_first(&self, key: T) {
         let bin_idx = self.bin_idx_1(key);
         prefetch_index::prefetch_index(&self.table, bin_idx);
@@ -178,8 +167,6 @@ impl<const MODE: Mode> CuckooSet<MODE> {
             return;
         }
 
-        let keys = S::splat(key as _);
-
         for idx in [self.bin_idx_1(key), self.bin_idx_2(key)] {
             let bin = &mut self.table[idx];
             if bin.has_zero() {
@@ -195,14 +182,13 @@ impl<const MODE: Mode> CuckooSet<MODE> {
     /// Internal version that forces the key into a specific option.
     #[inline(always)]
     fn insert_to_bin(&mut self, key: T, idx: usize) {
-        let keys = S::splat(key as _);
         let bin = &mut self.table[idx];
         if bin.has_zero() {
             bin.insert(key);
             self.len += 1;
             return;
         }
-        let mut bump_idx = rand::random_range(0..BIN_SIZE);
+        let bump_idx = rand::random_range(0..BIN_SIZE);
         let key = std::mem::replace(&mut bin.0[bump_idx], key);
         let idx = self.bin_idx_1(key) ^ self.bin_idx_2(key) ^ idx;
         become self.insert_to_bin(key, idx);

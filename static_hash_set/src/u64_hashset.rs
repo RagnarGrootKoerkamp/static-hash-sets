@@ -5,12 +5,7 @@
 //! we may need to do longer probe sequences (each probe is 8 bytes, not 1 byte), but on the other hand we only take
 //! 1 cache miss per access, not 2.
 
-use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
 use std::hash::{BuildHasher, BuildHasherDefault};
-use std::hint::select_unpredictable;
-use std::mem::transmute;
-
-use rustc_hash::FxHashMap;
 use wide::CmpEq;
 
 use super::BIN_SIZE;
@@ -70,7 +65,6 @@ impl Bin {
     }
     #[inline(always)]
     pub fn insert(&mut self, key: T) {
-        let [h1, h2]: [S; 2] = unsafe { std::mem::transmute(*self) };
         let idx = self.len();
         assert_eq!(
             self.0[idx], 0,
@@ -119,11 +113,6 @@ impl U64HashSet {
     #[inline(always)]
     fn get_bin(&self, idx: usize) -> &Bin {
         unsafe { self.table.get_unchecked(idx) }
-    }
-
-    #[inline(always)]
-    fn get_bin_mut(&mut self, idx: usize) -> &mut Bin {
-        unsafe { self.table.get_unchecked_mut(idx) }
     }
 
     #[inline(always)]

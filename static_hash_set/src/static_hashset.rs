@@ -7,14 +7,13 @@
 
 use rustc_hash::FxHashMap;
 use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-use std::hash::{BuildHasher, BuildHasherDefault};
-use std::hint::select_unpredictable;
 use std::mem::transmute;
 use wide::CmpEq;
 
 use super::T;
 use crate::{BIN_SIZE, S};
 
+#[allow(unused)]
 pub struct StaticHashSet {
     pub slot_ratio: f32,
     pub meta_ratio: f32,
@@ -32,9 +31,6 @@ pub struct StaticHashSet {
     // none: AtomicUsize,
     // skips: AtomicUsize,
     probelen: FxHashMap<usize, usize>,
-    last_b: usize,
-    last_j: usize,
-    last_empty: usize,
 }
 
 const PADDING: usize = 100;
@@ -43,7 +39,7 @@ fn mul(a: usize, b: usize) -> usize {
     a.widening_mul(b).1
 }
 
-fn to_part(key: T, p: usize, k: usize) -> usize {
+fn to_part(key: T, p: usize, _k: usize) -> usize {
     let x = fxhash::hash64(&(key ^ 13245)) as usize;
     // first, replace x by 1-(1-x)^2 = 2x - x^2
     // let x = (2*x).wrapping_sub(mul(x, x));
@@ -51,15 +47,15 @@ fn to_part(key: T, p: usize, k: usize) -> usize {
     // quadratic: x^2
     let sq = mul(x, x);
     // qubic: (x^2 + x^3)/2
-    let cube = mul(sq, x);
-    let c = sq / 2 + cube / 2;
+    // let cube = mul(sq, x);
+    // let c = sq / 2 + cube / 2;
     // quartic: x^4/3 + x^3/6 + x^2/2
     let quart = mul(sq, sq);
-    let q = quart / 3 + cube / 6 + sq / 2;
+    // let q = quart / 3 + cube / 6 + sq / 2;
 
     // x**6
     let six = mul(quart, sq);
-    let oct = mul(quart, quart);
+    // let oct = mul(quart, quart);
 
     // c.widening_mul(p).1
     six.widening_mul(p).1
@@ -115,7 +111,7 @@ impl StaticHashSet {
 
         // 2. split into b even parts
         let mut part_sizes = vec![0; p];
-        let shift = 64 - p.trailing_zeros();
+        // let shift = 64 - p.trailing_zeros();
         for key in &*keys {
             let p = to_part(*key, p, k);
             part_sizes[p] += 1;
@@ -139,10 +135,10 @@ impl StaticHashSet {
         let mut bucket_sizes = vec![0u8; b];
         let mut collisions = vec![];
         // eprintln!("find seeds..");
-        for (idx, &i) in perm.iter().enumerate() {
+        for (_idx, &i) in perm.iter().enumerate() {
             let start = part_starts[i];
             let end = part_starts[i + 1];
-            let len = end - start;
+            // let len = end - start;
             // if i % 1024 == 0 {
             //     eprintln!("part {idx:>10}/{p:>10}, size {len:>10}");
             // }
@@ -229,9 +225,6 @@ impl StaticHashSet {
             // none: AtomicUsize::new(0),
             // skips: AtomicUsize::new(0),
             probelen: Default::default(),
-            last_b: 0,
-            last_j: 0,
-            last_empty: 0,
         }
     }
 
@@ -322,7 +315,7 @@ impl StaticHashSet {
         }
         let part = to_part(key, self.p, self.k);
         let seed = self.seeds[part];
-        let mut bi = to_bin(key, seed as u64, self.b);
+        let bi = to_bin(key, seed as u64, self.b);
 
         let keys = S::splat(key as _);
 

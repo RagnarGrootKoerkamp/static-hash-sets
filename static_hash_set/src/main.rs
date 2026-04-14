@@ -1,4 +1,4 @@
-#![allow(unused, incomplete_features)]
+#![allow(incomplete_features)]
 #![feature(
     impl_trait_in_assoc_type,
     widening_mul,
@@ -11,19 +11,11 @@ mod static_hashset;
 mod traits;
 mod u64_hashset;
 
-use std::{
-    hash::{BuildHasher, BuildHasherDefault},
-    hint::black_box,
-};
+use std::{hash::BuildHasherDefault, hint::black_box};
 
-use fxhash::{FxBuildHasher, FxHashSet};
-use mem_dbg::{MemSize, SizeFlags};
-use rand::{
-    seq::{IndexedRandom, SliceRandom},
-    Rng,
-};
+use cuckoo::{CuckooSet, Mode};
+use rand::seq::IndexedRandom;
 use static_hashset::StaticHashSet;
-use sux::{dict::EliasFanoBuilder, traits::IndexedDict};
 use traits::HashSet;
 use u64_hashset::U64HashSet;
 type FxHasher = BuildHasherDefault<fxhash::FxHasher>;
@@ -35,14 +27,6 @@ type T = u64;
 const BIN_SIZE: usize = 8;
 type S = wide::i64x4;
 
-fn gen_keys(n: usize) -> Vec<T> {
-    eprint!("Gen {n} keys..");
-    let mut v = vec![0; n];
-    rand::fill(&mut v[..]);
-    eprintln!(" done");
-    v
-}
-
 fn main() {
     let ns = (0..)
         .map(|i| (1_000_000. * 1.35f32.powi(i)) as usize)
@@ -51,13 +35,6 @@ fn main() {
 
     let hashers = vec![
         Box::new(hashbrown::HashSet::<T, FxHasher>::default()) as Box<dyn HashSet>,
-        // some slow external stuff
-        //Box::new(
-        //    fastbloom::BloomFilter::with_false_pos(0.1)
-        //        .hasher(FxBuildHasher::default())
-        //        .items(&[()]),
-        //),
-        //Box::new(cuckoofilter::CuckooFilter::<fxhash::FxHasher>::with_capacity(0)),
         Box::new(U64HashSet::new(1.4, &[])),
         Box::new(U64HashSet::new(1.2, &[])),
         Box::new(U64HashSet::new(1.1, &[])),
@@ -89,6 +66,7 @@ fn time<T>(mut f: impl FnMut() -> T) -> (f32, T) {
 }
 
 const QUERIES: usize = 5_000_000;
+#[allow(unused)]
 const MAX_THREADS: usize = 12;
 
 pub struct Bencher {
@@ -160,7 +138,7 @@ impl Bencher {
         for &threads in &THREAD_COUNTS {
             eprint!("{:>64} {threads:>8}", "");
             let mut query = [0f32; 5];
-            for (qi, &p) in PS.iter().enumerate() {
+            for (qi, &_p) in PS.iter().enumerate() {
                 let start = std::time::Instant::now();
                 std::thread::scope(|scope| {
                     for t in 0..threads {
