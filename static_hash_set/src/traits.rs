@@ -6,16 +6,18 @@ use sux::dict::EliasFanoBuilder;
 
 use crate::{static_hashset::StaticHashSet, u64_hashset::U64HashSet};
 
+use super::T;
+
 pub trait HashSet: Send + Sync {
     fn name(&self) -> &'static str;
-    fn new(&self, keys: &[u32]) -> Box<dyn HashSet>;
+    fn new(&self, keys: &[T]) -> Box<dyn HashSet>;
     fn allocation_size(&self) -> usize;
     fn has_prefetch(&self) -> bool {
         false
     }
-    fn prefetch(&self, key: u32) {}
-    fn get(&self, key: u32) -> bool;
-    fn count(&self, keys: &[u32]) -> usize {
+    fn prefetch(&self, key: T) {}
+    fn get(&self, key: T) -> bool;
+    fn count(&self, keys: &[T]) -> usize {
         let lookahead = 32;
         let mut c = 0;
         for i in 0..keys.len().saturating_sub(lookahead) {
@@ -27,11 +29,11 @@ pub trait HashSet: Send + Sync {
     }
 }
 
-impl HashSet for hashbrown::HashSet<u32, FxBuildHasher> {
+impl HashSet for hashbrown::HashSet<T, FxBuildHasher> {
     fn name(&self) -> &'static str {
         "FxHashSet"
     }
-    fn new(&self, keys: &[u32]) -> Box<dyn HashSet> {
+    fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
         let mut h = hashbrown::HashSet::with_capacity_and_hasher(keys.len(), Default::default());
         for &k in keys {
             h.insert(k);
@@ -42,7 +44,7 @@ impl HashSet for hashbrown::HashSet<u32, FxBuildHasher> {
         self.allocation_size()
     }
     #[inline(always)]
-    fn get(&self, key: u32) -> bool {
+    fn get(&self, key: T) -> bool {
         self.contains(&key)
     }
 }
@@ -51,7 +53,7 @@ impl HashSet for fastbloom::BloomFilter<FxBuildHasher> {
     fn name(&self) -> &'static str {
         "BloomFilter"
     }
-    fn new(&self, keys: &[u32]) -> Box<dyn HashSet> {
+    fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
         let mut h = fastbloom::BloomFilter::with_false_pos(0.01)
             .hasher(FxBuildHasher::default())
             .items(keys.iter().copied());
@@ -63,7 +65,7 @@ impl HashSet for fastbloom::BloomFilter<FxBuildHasher> {
         0
     }
     #[inline(always)]
-    fn get(&self, key: u32) -> bool {
+    fn get(&self, key: T) -> bool {
         self.contains(&key)
     }
 }
@@ -72,7 +74,7 @@ impl HashSet for cuckoofilter::CuckooFilter<FxHasher> {
     fn name(&self) -> &'static str {
         "CuckooFilter"
     }
-    fn new(&self, keys: &[u32]) -> Box<dyn HashSet> {
+    fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
         let mut h = Self::with_capacity(keys.len() + keys.len() / 10);
         for &k in keys {
             h.add(&k).unwrap();
@@ -83,7 +85,7 @@ impl HashSet for cuckoofilter::CuckooFilter<FxHasher> {
         0
     }
     #[inline(always)]
-    fn get(&self, key: u32) -> bool {
+    fn get(&self, key: T) -> bool {
         self.contains(&key)
     }
 }
@@ -92,7 +94,7 @@ impl HashSet for U64HashSet {
     fn name(&self) -> &'static str {
         "U64HashSet"
     }
-    fn new(&self, keys: &[u32]) -> Box<dyn HashSet> {
+    fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
         let mut h = U64HashSet::new(self.slot_ratio, keys);
         Box::new(h)
     }
@@ -102,11 +104,11 @@ impl HashSet for U64HashSet {
     fn has_prefetch(&self) -> bool {
         true
     }
-    fn prefetch(&self, key: u32) {
+    fn prefetch(&self, key: T) {
         U64HashSet::prefetch(self, key)
     }
     #[inline(always)]
-    fn get(&self, key: u32) -> bool {
+    fn get(&self, key: T) -> bool {
         self.contains(key)
     }
 }
@@ -115,7 +117,7 @@ impl<const PROBE: bool> HashSet for StaticHashSet<PROBE> {
     fn name(&self) -> &'static str {
         "StaticHashSet"
     }
-    fn new(&self, keys: &[u32]) -> Box<dyn HashSet> {
+    fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
         let h = StaticHashSet::<PROBE>::new(self.slot_ratio, self.meta_ratio, keys);
         Box::new(h)
     }
@@ -126,11 +128,11 @@ impl<const PROBE: bool> HashSet for StaticHashSet<PROBE> {
         true
     }
     #[inline(always)]
-    fn prefetch(&self, key: u32) {
+    fn prefetch(&self, key: T) {
         StaticHashSet::prefetch(self, key)
     }
     #[inline(always)]
-    fn get(&self, key: u32) -> bool {
+    fn get(&self, key: T) -> bool {
         self.contains(key)
     }
 }

@@ -22,7 +22,12 @@ use traits::HashSet;
 use u64_hashset::U64HashSet;
 type FxHasher = BuildHasherDefault<fxhash::FxHasher>;
 
-type T = u32;
+// type T = u32;
+// const BUCKET_SIZE: usize = 16;
+// type S = wide::i32x8;
+type T = u64;
+const BUCKET_SIZE: usize = 8;
+type S = wide::i64x4;
 
 fn gen_keys(n: usize) -> Vec<T> {
     eprint!("Gen {n} keys..");
@@ -39,7 +44,7 @@ fn main() {
         .collect::<Vec<_>>();
 
     let hashers = vec![
-        Box::new(hashbrown::HashSet::<u32, FxHasher>::default()) as Box<dyn HashSet>,
+        Box::new(hashbrown::HashSet::<T, FxHasher>::default()) as Box<dyn HashSet>,
         // some slow external stuff
         //Box::new(
         //    fastbloom::BloomFilter::with_false_pos(0.1)
@@ -77,8 +82,8 @@ const MAX_THREADS: usize = 12;
 
 pub struct Bencher {
     n: usize,
-    keys: Vec<u32>,
-    queries: Vec<[Vec<u32>; 5]>,
+    keys: Vec<T>,
+    queries: Vec<[Vec<T>; 5]>,
 }
 
 pub struct BenchResult {
@@ -134,7 +139,7 @@ impl Bencher {
         let (build, h) = time(|| h.new(&self.keys));
         let build = build / self.n as f32;
         let bits_per_key = h.allocation_size() as f32 * 8.0 / self.n as f32;
-        let overhead = bits_per_key / 32.0;
+        let overhead = bits_per_key / T::BITS as f32;
         let pf = h.has_prefetch();
         eprint!("{:>8.3} {:>8.3} |", build, overhead);
 

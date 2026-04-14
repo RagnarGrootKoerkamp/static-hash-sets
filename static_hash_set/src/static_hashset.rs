@@ -5,17 +5,15 @@
 //! we may need to do longer probe sequences (each probe is 8 bytes, not 1 byte), but on the other hand we only take
 //! 1 cache miss per access, not 2.
 
+use rustc_hash::FxHashMap;
 use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
 use std::hash::{BuildHasher, BuildHasherDefault};
 use std::hint::select_unpredictable;
 use std::mem::transmute;
-// type S = wide::i64x4;
-type S = wide::i32x8;
-
-use rustc_hash::FxHashMap;
 use wide::CmpEq;
 
 use super::T;
+use crate::{BUCKET_SIZE, S};
 
 pub struct StaticHashSet<const PROBE: bool> {
     pub slot_ratio: f32,
@@ -40,8 +38,6 @@ pub struct StaticHashSet<const PROBE: bool> {
 }
 
 const PADDING: usize = 100;
-
-const BUCKET_SIZE: usize = 16;
 
 fn mul(a: usize, b: usize) -> usize {
     a.widening_mul(b).1

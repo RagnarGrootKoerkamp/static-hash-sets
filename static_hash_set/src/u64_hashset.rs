@@ -9,12 +9,12 @@ use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
 use std::hash::{BuildHasher, BuildHasherDefault};
 use std::hint::select_unpredictable;
 use std::mem::transmute;
-// type S = wide::i64x4;
-type S = wide::i32x8;
 
 use rustc_hash::FxHashMap;
 use wide::CmpEq;
 
+use super::BUCKET_SIZE;
+use crate::S;
 use crate::T;
 
 type Hasher = BuildHasherDefault<rustc_hash::FxHasher>;
@@ -56,8 +56,6 @@ impl IntoIterator for &U64HashSet {
         )
     }
 }
-
-const BUCKET_SIZE: usize = 16;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(align(64))] // Cache line alignment
