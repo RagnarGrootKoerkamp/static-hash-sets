@@ -9,6 +9,8 @@
 
 pub mod cuckoo;
 pub mod kphf_set;
+#[cfg(test)]
+mod test;
 mod traits;
 mod u64_hashset;
 
