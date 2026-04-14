@@ -6,11 +6,13 @@ import pandas as pd
 import math
 
 w = 64
-name = "64-cuckoo-2"
+name = "64"
 
 data = pd.read_csv(f"out-{name}.csv")
 
 data = data[data["metric"] >= "prefetch"]
+
+# data = data[data["h"].str.contains("KphfSet")]
 
 
 def make_category(row):
@@ -40,15 +42,18 @@ label_color = {
     "CuckooSet<PrefetchOneLazy> (1.4x)": "orange",
     "CuckooSet<PrefetchOneLazy> (1.2x)": "orange",
     "CuckooSet<PrefetchOneLazy> (1.1x)": "orange",
-    "CuckooSet<PrefetchOneEager> (1.4x)": "brown",
-    "CuckooSet<PrefetchOneEager> (1.2x)": "brown",
-    "CuckooSet<PrefetchOneEager> (1.1x)": "brown",
-    "CuckooSet<PrefetchBoth> (1.4x)": "purple",
-    "CuckooSet<PrefetchBoth> (1.2x)": "purple",
-    "CuckooSet<PrefetchBoth> (1.1x)": "purple",
-    "StaticHashSet (1.4x)": "blue",
-    "StaticHashSet (1.2x)": "blue",
-    "StaticHashSet (1.1x)": "blue",
+    "CuckooSet<PrefetchOneEager> (1.4x)": "white",
+    "CuckooSet<PrefetchOneEager> (1.2x)": "white",
+    "CuckooSet<PrefetchOneEager> (1.1x)": "white",
+    "CuckooSet<PrefetchBoth> (1.4x)": "white",
+    "CuckooSet<PrefetchBoth> (1.2x)": "white",
+    "CuckooSet<PrefetchBoth> (1.1x)": "white",
+    "KphfSet<Sort> (1.4x)": "blue",
+    "KphfSet<Sort> (1.2x)": "blue",
+    "KphfSet<Sort> (1.1x)": "blue",
+    "KphfSet<SortBump> (1.4x)": "lightblue",
+    "KphfSet<SortBump> (1.2x)": "lightblue",
+    "KphfSet<SortBump> (1.1x)": "lightblue",
 }
 label_lw = {
     "FxHashSet (1.4-2.8x)": 2.5,
@@ -65,9 +70,12 @@ label_lw = {
     "CuckooSet<PrefetchBoth> (1.4x)": 2,
     "CuckooSet<PrefetchBoth> (1.2x)": 1.5,
     "CuckooSet<PrefetchBoth> (1.1x)": 1,
-    "StaticHashSet (1.4x)": 2,
-    "StaticHashSet (1.2x)": 1.5,
-    "StaticHashSet (1.1x)": 1,
+    "KphfSet<Sort> (1.4x)": 2,
+    "KphfSet<Sort> (1.2x)": 1.5,
+    "KphfSet<Sort> (1.1x)": 1,
+    "KphfSet<SortBump> (1.4x)": 2,
+    "KphfSet<SortBump> (1.2x)": 1.5,
+    "KphfSet<SortBump> (1.1x)": 1,
 }
 
 plt.close()
