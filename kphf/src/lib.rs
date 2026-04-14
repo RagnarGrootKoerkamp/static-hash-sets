@@ -250,24 +250,27 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             for seed in 0..256_usize - if bump { 1 } else { 0 } {
                 let mut counts = vec![0; K];
                 let mut collisions = 0;
+                let mut set = 0;
                 for key in part {
                     let bi = self.to_bin(*key, seed_offset + seed as u64);
                     let s = bin_sizes[bi] as usize;
                     if s < K {
                         counts[s] += 1;
+                        set += 1;
                     } else {
                         collisions += 1;
+                        break;
                     }
                     // update the bin_size to handle self-collisions
                     bin_sizes[bi] += 1;
                 }
                 let score = f(&counts);
                 vals.push((collisions, score, seed));
-                for &key in part {
+                for &key in &part[..set] {
                     let bi = self.to_bin(key, seed_offset + seed as u64);
                     bin_sizes[bi] -= 1;
                 }
-                if greedy && collisions == 0 && (!consensus || tries[i] < vals.len() as u8) {
+                if greedy && collisions == 0 && (!consensus || tries[set] < vals.len() as u8) {
                     break;
                 }
             }
