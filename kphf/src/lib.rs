@@ -1,9 +1,5 @@
-#![feature(
-    impl_trait_in_assoc_type,
-    widening_mul,
-    adt_const_params,
-    generic_const_exprs
-)]
+#![allow(incomplete_features)]
+#![feature(widening_mul, adt_const_params, generic_const_exprs)]
 
 pub trait KphfT {
     fn name(&self) -> &'static str;
@@ -28,6 +24,13 @@ impl Key for u32 {
     const SALT: Self = 13245;
     fn from_seed(seed: u64) -> Self {
         seed as u32
+    }
+}
+
+impl Key for u64 {
+    const SALT: Self = 13245;
+    fn from_seed(seed: u64) -> Self {
+        seed
     }
 }
 
@@ -80,10 +83,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             .1
     }
 
-    pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self>
-    where
-        [(); K + 1]:,
-    {
+    pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
         let n = keys.len();
         // bins
         let num_bins = ((n as f32 / alpha) as usize).div_ceil(K);
@@ -104,10 +104,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         kphf.build(keys).map(|_| kphf)
     }
 
-    fn build<T: Key>(&mut self, keys: &[T]) -> Option<()>
-    where
-        [(); K + 1]:,
-    {
+    fn build<T: Key>(&mut self, keys: &[T]) -> Option<()> {
         let start = std::time::Instant::now();
         let sort = matches!(MODE, Mode::Sort | Mode::SortBump);
         let consensus = matches!(MODE, Mode::Consensus);
@@ -148,7 +145,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         let mut backtracks = 0;
         let mut i = 0;
 
-        let mut lg: [f64; K + 1] = std::array::from_fn(|i| (i as f64).log2());
+        let mut lg: [f64; K] = std::array::from_fn(|i| (i as f64).log2());
         lg[0] = f64::MIN;
 
         let mut bumped_keys: Vec<T> = vec![];
@@ -203,15 +200,21 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             );
 
             for seed in 0..256_usize - if bump { 1 } else { 0 } {
-                let mut counts = vec![0; K + 1];
+                let mut counts = vec![0; K];
+                let mut collisions = 0;
                 for key in part {
                     let bi = self.to_bin(*key, seed_offset + seed as u64);
-                    counts[(bin_sizes[bi] as usize).min(K)] += 1;
+                    let s = bin_sizes[bi] as usize;
+                    if s < K {
+                        counts[s] += 1;
+                    } else {
+                        collisions += 1;
+                    }
                     // update the bin_size to handle self-collisions
                     bin_sizes[bi] += 1;
                 }
                 let score = f(&counts);
-                vals.push((counts[K], score, seed));
+                vals.push((collisions, score, seed));
                 for &key in part {
                     let bi = self.to_bin(key, seed_offset + seed as u64);
                     bin_sizes[bi] -= 1;
@@ -280,7 +283,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             i += 1;
         }
 
-        let duration = start.elapsed();
+        let _duration = start.elapsed();
         // eprintln!(
         //     "alpha: {:>4.2}, bits/key: {:<6}, mode: {:>27} BTs {backtracks:>7} Bumped {bumped:>7} ({:.4}%) {:>6?}ms",
         //     self.alpha,

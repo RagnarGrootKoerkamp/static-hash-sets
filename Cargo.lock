@@ -1418,6 +1418,7 @@ dependencies = [
  "fastbloom",
  "fxhash",
  "hashbrown",
+ "kphf",
  "mem_dbg",
  "memsize",
  "prefetch-index",
