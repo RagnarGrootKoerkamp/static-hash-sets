@@ -15,6 +15,7 @@ mod u64_hashset;
 use std::{hash::BuildHasherDefault, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
+use kphf::space_lower_bound;
 use kphf_set::KphfSet;
 use rand::seq::IndexedRandom;
 use traits::HashSet;
@@ -48,9 +49,34 @@ fn main() {
         Box::new(CuckooSet::<{ Mode::PrefetchBoth }>::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::PrefetchOneLazy }>::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::PrefetchOneEager }>::new(1.1, &[])),
+        Box::new(KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::new(
+            0.7,
+            2.0 * space_lower_bound(BIN_SIZE, 0.7),
+            &[],
+        )) as Box<dyn HashSet>,
         Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
-            1.4,
-            0.015,
+            0.7,
+            2.0 * space_lower_bound(BIN_SIZE, 0.7),
+            &[],
+        )) as Box<dyn HashSet>,
+        Box::new(KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::new(
+            0.8,
+            2.0 * space_lower_bound(BIN_SIZE, 0.8),
+            &[],
+        )) as Box<dyn HashSet>,
+        Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
+            0.8,
+            2.0 * space_lower_bound(BIN_SIZE, 0.8),
+            &[],
+        )) as Box<dyn HashSet>,
+        Box::new(KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::new(
+            0.9,
+            2.0 * space_lower_bound(BIN_SIZE, 0.9),
+            &[],
+        )) as Box<dyn HashSet>,
+        Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
+            0.9,
+            2.0 * space_lower_bound(BIN_SIZE, 0.9),
             &[],
         )) as Box<dyn HashSet>,
     ];
@@ -109,7 +135,7 @@ impl Bencher {
                 ];
                 REPEATS
             ];
-            THREADS.len()
+            *THREADS.last().unwrap()
         ];
         for threads_queries in &mut queries {
             for repeat_queries in threads_queries {
