@@ -1,7 +1,5 @@
 use fxhash::{FxBuildHasher, FxHasher};
 
-use crate::{static_hashset::StaticHashSet, u64_hashset::U64HashSet};
-
 use super::T;
 
 pub trait HashSet: Send + Sync {

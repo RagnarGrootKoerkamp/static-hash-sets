@@ -9,7 +9,6 @@
 
 pub mod cuckoo;
 pub mod kphf_set;
-mod static_hashset;
 mod traits;
 mod u64_hashset;
 
@@ -18,7 +17,6 @@ use std::{hash::BuildHasherDefault, hint::black_box};
 use cuckoo::{CuckooSet, Mode};
 use kphf_set::KphfSet;
 use rand::seq::IndexedRandom;
-use static_hashset::StaticHashSet;
 use traits::HashSet;
 use u64_hashset::U64HashSet;
 type FxHasher = BuildHasherDefault<fxhash::FxHasher>;
@@ -50,16 +48,11 @@ fn main() {
         Box::new(CuckooSet::<{ Mode::PrefetchBoth }>::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::PrefetchOneLazy }>::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::PrefetchOneEager }>::new(1.1, &[])),
-        Box::new(StaticHashSet::new(1.4, 0.015, &[])) as Box<dyn HashSet>,
-        Box::new(StaticHashSet::new(1.2, 0.030, &[])),
-        Box::new(StaticHashSet::new(1.1, 0.060, &[])),
         Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
             1.4,
             0.015,
             &[],
         )) as Box<dyn HashSet>,
-        Box::new(StaticHashSet::new(1.2, 0.030, &[])),
-        Box::new(StaticHashSet::new(1.1, 0.060, &[])),
     ];
     bench(&ns, &hashers);
 
