@@ -3,14 +3,17 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import math
 
-data = pd.read_csv("out.csv")
+w = 32
+
+data = pd.read_csv(f"out-{w}.csv")
 
 
 def make_category(row):
     if row["h"] == "FxHashSet":
         return "1.4-2.8"
-    return str(round(row["overhead"], 1))
+    return str(math.floor(row["overhead"] * 10) / 10)
 
 
 data["target_overhead"] = data.apply(make_category, axis=1)
@@ -45,7 +48,8 @@ plt.close()
 
 queries = ["q01", "q10", "q50", "q90", "q99"]
 titles = ["p=0.01", "p=0.10", "p=0.50", "p=0.90", "p=0.99"]
-thread_counts = sorted(data["threads"].unique())
+# thread_counts = sorted(data["threads"].unique())
+thread_counts = [1, 6, 12]
 sizes = [12 * 1024 * 1024]
 cache_labels = ["L3  ", "  RAM"]
 
@@ -93,6 +97,6 @@ for ri, threads in enumerate(thread_counts):
         else:
             ax.legend().remove() if ax.get_legend() else None
 
-fig.suptitle("u32 hashset query throughput")
+fig.suptitle(f"u{w} hashset query throughput")
 fig.tight_layout()
-fig.savefig("plot.png", bbox_inches="tight", dpi=300)
+fig.savefig(f"plot-{w}.png", bbox_inches="tight", dpi=300)
