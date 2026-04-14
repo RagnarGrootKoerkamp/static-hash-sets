@@ -99,6 +99,7 @@ pub fn space_lower_bound(k: usize, alpha: f32) -> f32 {
 }
 
 impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
+    #[inline(always)]
     fn to_part<T: Key>(&self, key: T) -> usize {
         let x = fxhash::hash64(&(key ^ T::SALT)) as usize;
         // quadratic: x^2
@@ -108,6 +109,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         six.widening_mul(self.num_buckets).1
     }
 
+    #[inline(always)]
     fn to_bin<T: Key>(&self, key: T, seed: u64) -> usize {
         (fxhash::hash64(&(key ^ T::from_seed(seed))) as usize)
             .widening_mul(self.num_bins)
@@ -349,12 +351,13 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         self.bumped.as_ref().map_or(0, |b| b.n)
     }
 
+    #[inline(always)]
     pub fn get<T: Key>(&self, key: T) -> usize {
         let part = self.to_part(key);
         let seed = if matches!(MODE, Mode::Consensus) {
             u64::from_be_bytes(self.seeds[part..part + 8].try_into().unwrap())
         } else {
-            self.seeds[part + 7] as u64
+            unsafe { *self.seeds.get_unchecked(part + 7) as u64 }
         };
         if matches!(MODE, Mode::LinearBump | Mode::SortBump) && seed == 255 {
             self.num_bins + self.bumped.as_ref().unwrap().get(key)
