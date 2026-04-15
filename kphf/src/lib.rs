@@ -111,7 +111,7 @@ const SEED_MASK: u64 = 0b0011_1111;
 
 impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
-    fn to_part<T: Key>(&self, key: T) -> usize {
+    fn to_bucket<T: Key>(&self, key: T) -> usize {
         let x = fxhash::hash64(&(key ^ T::SALT)) as usize;
         // quadratic: x^2
         let sq = mul(x, x);
@@ -165,28 +165,27 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         let n = self.n;
 
-        // 1. sort the keys by part
+        // 1. sort the keys by bucket
         let mut keys = keys.to_vec();
-        // keys.sort_unstable();
-        keys.sort_unstable_by_key(|&key| (self.to_part(key), key));
+        keys.sort_unstable_by_key(|&key| (self.to_bucket(key), key));
         keys.dedup();
 
-        // 2. split into p parts
-        let mut part_sizes = vec![0; self.num_buckets];
+        // 2. split into p buckets
+        let mut bucket_sizes = vec![0; self.num_buckets];
         for key in &*keys {
-            let p = self.to_part(*key);
-            part_sizes[p] += 1;
+            let p = self.to_bucket(*key);
+            bucket_sizes[p] += 1;
         }
-        let mut part_starts = vec![0; self.num_buckets + 1];
+        let mut bucket_starts = vec![0; self.num_buckets + 1];
         for i in 1..=self.num_buckets {
-            part_starts[i] = part_starts[i - 1] + part_sizes[i - 1];
+            bucket_starts[i] = bucket_starts[i - 1] + bucket_sizes[i - 1];
         }
 
-        // 3. Sort parts by decreasing size
+        // 3. Sort buckets by decreasing size
         let mut perm = (0..self.num_buckets).collect::<Vec<_>>();
 
         if sort {
-            perm.sort_by_key(|&i| std::cmp::Reverse(part_sizes[i]));
+            perm.sort_by_key(|&i| std::cmp::Reverse(bucket_sizes[i]));
         }
 
         // 4. init bin sizes
@@ -209,19 +208,19 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         // eprintln!("Start construction");
 
-        'part: while i < self.num_buckets {
+        'bucket: while i < self.num_buckets {
             let idx = perm[i];
-            let start = part_starts[idx];
-            let end = part_starts[idx + 1];
+            let start = bucket_starts[idx];
+            let end = bucket_starts[idx + 1];
             let len = end - start;
 
             if len == 0 {
                 i += 1;
-                continue 'part;
+                continue 'bucket;
             }
 
-            let part = &keys[start..end];
-            assert!(part.is_sorted());
+            let bucket = &keys[start..end];
+            assert!(bucket.is_sorted());
 
             // score function
             fn pow(pow: u32) -> impl Fn(&[usize]) -> i64 {
@@ -269,7 +268,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 if seed % 64 == 0 {
                     mask = u64::MAX;
                     bins.clear();
-                    for key in part {
+                    for key in bucket {
                         let bi = self.to_bin(*key, seed_offset + seed as u64);
                         bins.push(bi);
                         // update mask
@@ -327,13 +326,13 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     tries[i - 1] += 1;
                     // Reduce the bucket size of previous seed of parent.
 
-                    let start = part_starts[idx - 1];
-                    let end = part_starts[idx];
-                    let part = &keys[start..end];
+                    let start = bucket_starts[idx - 1];
+                    let end = bucket_starts[idx];
+                    let bucket = &keys[start..end];
 
                     let seed = u64::from_be_bytes(seeds[i - 1..i + 7].try_into().unwrap());
 
-                    for &key in part {
+                    for &key in bucket {
                         let bi = self.to_bin(key, seed);
                         assert!(bin_sizes[bi] > 0);
                         bin_sizes[bi] -= 1;
@@ -354,9 +353,9 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     // Unfixable collision found.
                     return None;
                 }
-                bumped += part.len();
+                bumped += bucket.len();
                 i += 1;
-                bumped_keys.extend_from_slice(part);
+                bumped_keys.extend_from_slice(bucket);
                 seeds[idx + 7] = 255;
                 continue;
             }
@@ -365,7 +364,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             assert!(seed < 256);
             seeds[idx + 7] = seed as u8;
 
-            for &key in part {
+            for &key in bucket {
                 let bi = self.to_bin(key, seed_offset + seed as u64);
                 assert!( bin_sizes[bi] < K as u8, "collision at {i} size {len} seed {seed} offset {seed_offset:>0x} best {best:?} bin id {bi} bin size {}", bin_sizes[bi]);
                 bin_sizes[bi] += 1;
@@ -418,11 +417,11 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
     #[inline(always)]
     pub fn get<T: Key>(&self, key: T) -> usize {
-        let part = self.to_part(key);
+        let bi = self.to_bucket(key);
         let seed = if matches!(MODE, Mode::Consensus) {
-            u64::from_be_bytes(self.seeds[part..part + 8].try_into().unwrap())
+            u64::from_be_bytes(self.seeds[bi..bi + 8].try_into().unwrap())
         } else {
-            unsafe { *self.seeds.get_unchecked(part + 7) as u64 }
+            unsafe { *self.seeds.get_unchecked(bi + 7) as u64 }
         };
         if matches!(
             MODE,
