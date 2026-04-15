@@ -1,7 +1,6 @@
 #![allow(incomplete_features)]
 #![feature(widening_mul, adt_const_params, generic_const_exprs)]
 
-use itertools::Itertools;
 use std::fmt::Debug;
 use sux::traits::BitVecOpsMut;
 
@@ -283,7 +282,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             );
 
             let mut mask = u64::MAX;
-            let mut max_count;
+            let mut max_count: usize;
             let mut counts = vec![0isize; K + 1];
 
             'seed: for seed in 0..256_usize - if bump { 1 } else { 0 } {
@@ -291,18 +290,30 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     mask = u64::MAX;
                     bins.clear();
                     bin_counts.clear();
+
+                    // Get the bins this set of keys maps to.
                     for key in bucket {
                         let bi = self.to_bin(*key, seed_offset + seed as u64);
                         bins.push(bi);
                     }
+
+                    // Group the bins into (bin, count) pairs.
                     bins.sort_unstable();
-                    let chunks = bins.iter().chunk_by(|x| **x);
+                    let mut last_bi = bins[0];
+                    let mut count = 1;
                     max_count = 0;
-                    for (bi, chunk) in chunks.into_iter() {
-                        let count = chunk.count();
-                        bin_counts.push((bi, count));
-                        max_count = max_count.max(count);
+                    for &bi in &bins[1..] {
+                        if bi != last_bi {
+                            bin_counts.push((last_bi, count));
+                            max_count = max_count.max(count);
+                            last_bi = bi;
+                            count = 1;
+                        } else {
+                            count += 1;
+                        }
                     }
+                    bin_counts.push((last_bi, count));
+
                     if max_count > K {
                         // Nothing works here
                         mask = 0;

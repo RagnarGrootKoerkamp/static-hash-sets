@@ -823,7 +823,6 @@ version = "0.1.0"
 dependencies = [
  "bitvec",
  "fxhash",
- "itertools 0.14.0",
  "log",
  "mem_dbg 0.3.0",
  "memsize",
