@@ -331,12 +331,20 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 } else {
                     0
                 };
-                vals.push((0, score, seed));
+                if consensus {
+                    vals.push((0, score, seed));
+                } else {
+                    if score < vals[0].1 {
+                        vals[0] = (0, score, seed);
+                    }
+                }
                 if greedy && (consensus || tries[i] < vals.len() as u8) {
                     break;
                 }
             }
-            vals.sort_by(|x, y| x.partial_cmp(y).unwrap());
+            if vals.len() > 1 {
+                vals.sort_by(|x, y| x.partial_cmp(y).unwrap());
+            }
             let best = vals[tries[i] as usize];
             if consensus && best.0 > 0 {
                 backtracks += 1;
