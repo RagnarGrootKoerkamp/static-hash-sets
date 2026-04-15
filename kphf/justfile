@@ -1,0 +1,3 @@
+bench:
+    cargo run -r --example bench | tee eval/data.csv
+
