@@ -392,6 +392,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 "Bumping {bumped} keys = {:>.1}%",
                 bumped as f32 / n as f32 * 100.0
             );
+            assert!(bumped < n / 10, "Too many bumped keys.");
             self.bumped = Some(Box::new(Self::new::<T>(
                 // use a lazy load factor for fallback
                 0.5,
