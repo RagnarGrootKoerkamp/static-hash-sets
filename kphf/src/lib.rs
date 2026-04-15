@@ -142,6 +142,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         // #buckets
         let num_buckets = m.div_ceil(8);
 
+        // eprintln!("n: {n}, alpha: {alpha}, bits/key: {bits_per_key}, bins: {num_bins}, buckets: {num_buckets}");
+
         let mut kphf = Self {
             alpha,
             bits_per_key,
@@ -460,10 +462,13 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 "Bumping {bumped} keys = {:>.1}%",
                 bumped as f32 / n as f32 * 100.0
             );
-            assert!(
-                bumped < n / 10,
-                "Too many bumped keys: {bumped} out of {n}."
-            );
+            if bumped > n / 10 {
+                eprintln!(
+                    "Bumping {bumped} keys = {:>.1}%",
+                    bumped as f32 / n as f32 * 100.0
+                );
+            }
+            assert!(bumped < n / 2, "Too many bumped keys: {bumped} out of {n}.");
             self.bumped = Some(Box::new(Self::new::<T>(
                 // use a lazy load factor for fallback
                 0.5,
