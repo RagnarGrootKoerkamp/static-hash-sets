@@ -1,6 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(widening_mul, adt_const_params, generic_const_exprs)]
 
+use itertools::Itertools;
 use std::fmt::Debug;
 use sux::traits::BitVecOpsMut;
 
@@ -205,6 +206,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         let mut bumped_keys: Vec<T> = vec![];
 
         let mut bins = vec![];
+        let mut bin_counts = vec![];
 
         // eprintln!("Start construction");
 
@@ -223,25 +225,25 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             assert!(bucket.is_sorted());
 
             // score function
-            fn pow(pow: u32) -> impl Fn(&[usize]) -> i64 {
-                move |c: &[usize]| {
+            fn pow(pow: u32) -> impl Fn(&[isize]) -> i64 {
+                move |c: &[isize]| {
                     c.iter()
                         .enumerate()
-                        .map(|(size, cnt)| cnt * size.pow(pow))
+                        .map(|(size, cnt)| *cnt as usize * (size + 1).pow(pow))
                         .sum::<usize>() as i64
                 }
             }
             // New candidate score function:
             // Maximize the product of the number of empty slots in each bin.
             #[allow(unused)]
-            let maybe_optimal = |counts: &[usize]| -> i64 {
+            let maybe_optimal = |counts: &[isize]| -> i64 {
                 if counts[K] > 0 {
                     return i64::MAX;
                 }
                 let q = counts
                     .iter()
                     .enumerate()
-                    .map(|(size, &cnt)| cnt as f64 * lg[K - size])
+                    .map(|(size, &cnt)| cnt as f64 * lg[K - 1 - size])
                     .sum::<f64>();
                 (-q) as i64
             };
@@ -263,14 +265,33 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             );
 
             let mut mask = u64::MAX;
+            let mut max_count;
+            let mut counts = vec![0isize; K + 1];
 
             'seed: for seed in 0..256_usize - if bump { 1 } else { 0 } {
                 if seed % 64 == 0 {
                     mask = u64::MAX;
                     bins.clear();
+                    bin_counts.clear();
                     for key in bucket {
                         let bi = self.to_bin(*key, seed_offset + seed as u64);
                         bins.push(bi);
+                    }
+                    bins.sort_unstable();
+                    let chunks = bins.iter().chunk_by(|x| **x);
+                    max_count = 0;
+                    for (bi, chunk) in chunks.into_iter() {
+                        let count = chunk.count();
+                        bin_counts.push((bi, count));
+                        max_count = max_count.max(count);
+                    }
+                    if max_count > K {
+                        // Nothing works here
+                        mask = 0;
+                        continue 'seed;
+                    }
+
+                    for &(bi, _count) in &bin_counts {
                         // update mask
                         mask &=
                             sux::traits::BitVecValueOps::<usize>::get_value(&non_full_bins, bi, 64)
@@ -281,31 +302,37 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 if (mask >> (seed % 64)) & 1 == 0 {
                     continue 'seed;
                 }
+                if i == 0 && (seed % 64) != 0 {
+                    // For the first bucket, everything is still empty so no use in shifting.
+                    continue;
+                }
 
                 // More refined check that considers within-bucket collisions.
-                let mut counts = vec![0; K];
-                let mut collisions = 0;
-                let mut set = 0;
-                for &bi in &bins {
+                counts.fill(0);
+                for &(bi, count) in &bin_counts {
                     let bi = bi + (seed & SEED_MASK as usize) as usize;
-                    let s = bin_sizes[bi] as usize;
-                    if s < K {
-                        counts[s] += 1;
-                        set += 1;
-                    } else {
-                        collisions += 1;
-                        break;
+                    let s = unsafe { *bin_sizes.get_unchecked(bi) } as usize;
+                    if s + count > K {
+                        continue 'seed;
                     }
-                    // update the bin_size to handle self-collisions
-                    bin_sizes[bi] += 1;
+                    if !greedy {
+                        unsafe {
+                            *counts.get_unchecked_mut(s) += 1;
+                            *counts.get_unchecked_mut(s + count) -= 1;
+                        }
+                    }
                 }
-                let score = f(&counts);
-                vals.push((collisions, score, seed));
-                for &bi in &bins[..set] {
-                    let bi = bi + (seed & SEED_MASK as usize) as usize;
-                    bin_sizes[bi] -= 1;
-                }
-                if greedy && collisions == 0 && (!consensus || tries[set] < vals.len() as u8) {
+
+                let score = if !greedy && !consensus {
+                    for i in 1..=K {
+                        counts[i] += counts[i - 1];
+                    }
+                    f(&counts)
+                } else {
+                    0
+                };
+                vals.push((0, score, seed));
+                if greedy && (consensus || tries[i] < vals.len() as u8) {
                     break;
                 }
             }

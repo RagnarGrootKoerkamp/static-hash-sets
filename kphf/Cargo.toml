@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bitvec = "1.0.1"
 fxhash = "0.2.1"
+itertools = "0.14.0"
 log = "0.4.29"
 mem_dbg = "0.3.0"
 memsize = "0.1.4"
