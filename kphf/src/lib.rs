@@ -53,7 +53,7 @@ pub struct KptrHash<const MODE: Mode, const K: usize> {
     bumped: Option<Box<Self>>,
 }
 
-const PADDING: usize = 100;
+const PADDING: usize = 1 << 6;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, std::marker::ConstParamTy)]
 pub enum Mode {
@@ -119,15 +119,18 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
     #[inline(always)]
     fn to_bin<T: Key>(&self, key: T, seed: u64) -> usize {
-        (fxhash::hash64(&(key ^ T::from_seed(seed))) as usize)
-            .widening_mul(self.num_bins)
+        // The low 6 bits indicate a shift.
+        let mask = 0b0011_1111;
+        (fxhash::hash64(&(key ^ T::from_seed(seed & !mask))) as usize)
+            .widening_mul(self.num_bins - PADDING)
             .1
+            + (seed & mask) as usize
     }
 
     pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
         let n = keys.len();
         // bins
-        let num_bins = ((n as f32 / alpha) as usize).div_ceil(K);
+        let num_bins = ((n as f32 / alpha) as usize).div_ceil(K) + PADDING;
         // target metadata bits
         let m = (n as f32 * bits_per_key) as usize;
         // #buckets
@@ -185,7 +188,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         }
 
         // 4. init bin sizes
-        let mut bin_sizes = vec![0u8; self.num_bins + PADDING];
+        let mut bin_sizes = vec![0u8; self.num_bins];
         let mut seeds = vec![0u8; self.num_buckets + 7];
         let mut tries = vec![0u8; self.num_buckets];
 
@@ -251,7 +254,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 // First check for collisions
                 for key in part {
                     let bi = self.to_bin(*key, seed_offset + seed as u64);
-                    let s = bin_sizes[bi] as usize;
+                    let s = unsafe { *bin_sizes.get_unchecked(bi) as usize };
                     if s == K {
                         continue 'seed;
                     }
