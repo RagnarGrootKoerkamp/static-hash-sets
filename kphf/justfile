@@ -1,3 +1,5 @@
 bench:
     cargo run -r --example bench | tee eval/data.csv
+plot:
+    cd eval && python plot.py
 
