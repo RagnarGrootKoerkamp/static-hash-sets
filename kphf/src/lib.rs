@@ -19,7 +19,14 @@ fn mul(a: usize, b: usize) -> usize {
     a.widening_mul(b).1
 }
 
-pub trait Key: Copy + Ord + std::hash::Hash + std::ops::BitXor<Output = Self> + Debug {
+pub trait Key:
+    Copy
+    + Ord
+    + std::hash::Hash
+    + std::ops::BitXor<Output = Self>
+    + Debug
+    + Default
+{
     const SALT: Self;
     fn from_seed(seed: u64) -> Self;
 }
@@ -166,27 +173,43 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         let n = self.n;
 
-        // 1. sort the keys by bucket
-        let mut keys = keys.to_vec();
-        keys.sort_unstable_by_key(|&key| (self.to_bucket(key), key));
-        keys.dedup();
+        // 1. count keys per bucket
+        let mut bucket_sizes = vec![0; self.num_buckets + 1];
+        for key in keys {
+            let bi = self.to_bucket(*key);
+            bucket_sizes[bi] += 1;
+        }
+        // eprintln!("KEYS: {keys:?}");
+        // 2. get start positions
+        let mut bucket_starts = bucket_sizes;
+        let mut sum = 0;
+        for i in 0..=self.num_buckets {
+            let x = sum;
+            sum += bucket_starts[i];
+            bucket_starts[i] = x;
+        }
+        // 3. write keys into buckets
+        let mut bucketed_keys = vec![T::default(); n];
+        for key in keys {
+            let bi = self.to_bucket(*key);
+            bucketed_keys[bucket_starts[bi]] = *key;
+            bucket_starts[bi] += 1;
+        }
+        // 4. restore bucket_starts
+        for i in (1..=self.num_buckets).rev() {
+            bucket_starts[i] = bucket_starts[i - 1];
+        }
+        bucket_starts[0] = 0;
+        let keys = bucketed_keys;
 
-        // 2. split into p buckets
-        let mut bucket_sizes = vec![0; self.num_buckets];
-        for key in &*keys {
-            let p = self.to_bucket(*key);
-            bucket_sizes[p] += 1;
-        }
-        let mut bucket_starts = vec![0; self.num_buckets + 1];
-        for i in 1..=self.num_buckets {
-            bucket_starts[i] = bucket_starts[i - 1] + bucket_sizes[i - 1];
-        }
+        // keys.sort_by_cached_key(|&key| (self.to_bucket(key), key));
+        // keys.dedup();
 
         // 3. Sort buckets by decreasing size
         let mut perm = (0..self.num_buckets).collect::<Vec<_>>();
 
         if sort {
-            perm.sort_by_key(|&i| std::cmp::Reverse(bucket_sizes[i]));
+            perm.sort_by_key(|&i| std::cmp::Reverse(bucket_starts[i + 1] - bucket_starts[i]));
         }
 
         // 4. init bin sizes
