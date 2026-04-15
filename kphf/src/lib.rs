@@ -2,6 +2,7 @@
 #![feature(widening_mul, adt_const_params, generic_const_exprs)]
 
 use std::fmt::Debug;
+use sux::traits::BitVecOpsMut;
 
 pub trait KphfT {
     fn name(&self) -> &'static str;
@@ -106,6 +107,8 @@ pub fn space_lower_bound(k: usize, alpha: f32) -> f32 {
     TABLE[row][col]
 }
 
+const SEED_MASK: u64 = 0b0011_1111;
+
 impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
     fn to_part<T: Key>(&self, key: T) -> usize {
@@ -120,11 +123,10 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
     fn to_bin<T: Key>(&self, key: T, seed: u64) -> usize {
         // The low 6 bits indicate a shift.
-        let mask = 0b0011_1111;
-        (fxhash::hash64(&(key ^ T::from_seed(seed & !mask))) as usize)
+        (fxhash::hash64(&(key ^ T::from_seed(seed & !SEED_MASK))) as usize)
             .widening_mul(self.num_bins - PADDING)
             .1
-            + (seed & mask) as usize
+            + (seed & SEED_MASK) as usize
     }
 
     pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
@@ -189,6 +191,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         // 4. init bin sizes
         let mut bin_sizes = vec![0u8; self.num_bins];
+        let mut non_full_bins = sux::bit_vec![true; self.num_bins];
+
         let mut seeds = vec![0u8; self.num_buckets + 7];
         let mut tries = vec![0u8; self.num_buckets];
 
@@ -201,11 +205,20 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         let mut bumped_keys: Vec<T> = vec![];
 
-        while i < self.num_buckets {
+        let mut bins = vec![];
+
+        // eprintln!("Start construction");
+
+        'part: while i < self.num_buckets {
             let idx = perm[i];
             let start = part_starts[idx];
             let end = part_starts[idx + 1];
             let len = end - start;
+
+            if len == 0 {
+                i += 1;
+                continue 'part;
+            }
 
             let part = &keys[start..end];
             assert!(part.is_sorted());
@@ -250,22 +263,32 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 seed_offset.to_be_bytes()
             );
 
+            let mut mask = u64::MAX;
+
             'seed: for seed in 0..256_usize - if bump { 1 } else { 0 } {
-                // First check for collisions
-                for key in part {
-                    let bi = self.to_bin(*key, seed_offset + seed as u64);
-                    let s = unsafe { *bin_sizes.get_unchecked(bi) as usize };
-                    if s == K {
-                        continue 'seed;
+                if seed % 64 == 0 {
+                    mask = u64::MAX;
+                    bins.clear();
+                    for key in part {
+                        let bi = self.to_bin(*key, seed_offset + seed as u64);
+                        bins.push(bi);
+                        // update mask
+                        mask &=
+                            sux::traits::BitVecValueOps::<usize>::get_value(&non_full_bins, bi, 64)
+                                as u64;
                     }
+                    // eprintln!("Bin sizes for seed {seed}: {}", bins.len());
+                }
+                if (mask >> (seed % 64)) & 1 == 0 {
+                    continue 'seed;
                 }
 
                 // More refined check that considers within-bucket collisions.
                 let mut counts = vec![0; K];
                 let mut collisions = 0;
                 let mut set = 0;
-                for key in part {
-                    let bi = self.to_bin(*key, seed_offset + seed as u64);
+                for &bi in &bins {
+                    let bi = bi + (seed & SEED_MASK as usize) as usize;
                     let s = bin_sizes[bi] as usize;
                     if s < K {
                         counts[s] += 1;
@@ -279,8 +302,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 }
                 let score = f(&counts);
                 vals.push((collisions, score, seed));
-                for &key in &part[..set] {
-                    let bi = self.to_bin(key, seed_offset + seed as u64);
+                for &bi in &bins[..set] {
+                    let bi = bi + (seed & SEED_MASK as usize) as usize;
                     bin_sizes[bi] -= 1;
                 }
                 if greedy && collisions == 0 && (!consensus || tries[set] < vals.len() as u8) {
@@ -314,6 +337,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                         let bi = self.to_bin(key, seed);
                         assert!(bin_sizes[bi] > 0);
                         bin_sizes[bi] -= 1;
+                        non_full_bins.set(bi, true);
                     }
 
                     seeds[i + 6] = 0;
@@ -345,6 +369,9 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 let bi = self.to_bin(key, seed_offset + seed as u64);
                 assert!( bin_sizes[bi] < K as u8, "collision at {i} size {len} seed {seed} offset {seed_offset:>0x} best {best:?} bin id {bi} bin size {}", bin_sizes[bi]);
                 bin_sizes[bi] += 1;
+                if bin_sizes[bi] == K as u8 {
+                    non_full_bins.set(bi, false);
+                }
             }
 
             i += 1;
