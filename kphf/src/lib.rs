@@ -54,6 +54,8 @@ pub struct KptrHash<const MODE: Mode, const K: usize> {
     seeds: Vec<u8>,
     /// Bump structure
     bumped: Option<Box<Self>>,
+    /// Salt for hashing, against bad inputs, and so that bumped keys map differently.
+    salt: u64,
 }
 
 const PADDING: usize = 1 << 6;
@@ -114,7 +116,7 @@ const SEED_MASK: u64 = 0b0011_1111;
 impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
     fn to_bucket<T: Key>(&self, key: T) -> usize {
-        let x = fxhash::hash64(&(key ^ T::SALT)) as usize;
+        let x = fxhash::hash64(&(key ^ T::from_seed(self.salt))) as usize;
         // quadratic: x^2
         let sq = mul(x, x);
         // x**6
@@ -148,6 +150,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             num_buckets,
             seeds: vec![],
             bumped: None,
+            salt: rand::random(),
         };
         kphf.build(keys).map(|_| kphf)
     }
