@@ -20,12 +20,7 @@ fn mul(a: usize, b: usize) -> usize {
 }
 
 pub trait Key:
-    Copy
-    + Ord
-    + std::hash::Hash
-    + std::ops::BitXor<Output = Self>
-    + Debug
-    + Default
+    Copy + Ord + std::hash::Hash + std::ops::BitXor<Output = Self> + Debug + Default
 {
     const SALT: Self;
     fn from_seed(seed: u64) -> Self;
@@ -233,6 +228,33 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         // eprintln!("Start construction");
 
+        // score function
+        fn pow<const K: usize>(pow: u32) -> impl Fn(&[isize]) -> i64 {
+            let pows: [isize; K] = std::array::from_fn(|i| (i as isize + 1).pow(pow));
+            move |c: &[isize]| {
+                c.iter()
+                    .enumerate()
+                    .map(|(size, cnt)| *cnt * pows[size])
+                    .sum::<isize>() as i64
+            }
+        }
+        // New candidate score function:
+        // Maximize the product of the number of empty slots in each bin.
+        #[allow(unused)]
+        let maybe_optimal = |counts: &[isize]| -> i64 {
+            if counts[K] > 0 {
+                return i64::MAX;
+            }
+            let q = counts
+                .iter()
+                .enumerate()
+                .map(|(size, &cnt)| cnt as f64 * lg[K - 1 - size])
+                .sum::<f64>();
+            (-q) as i64
+        };
+        let f = pow::<K>(7);
+        // let f = maybe_optimal;
+
         'bucket: while i < self.num_buckets {
             let idx = perm[i];
             let start = bucket_starts[idx];
@@ -245,33 +267,6 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             }
 
             let bucket = &keys[start..end];
-            assert!(bucket.is_sorted());
-
-            // score function
-            fn pow(pow: u32) -> impl Fn(&[isize]) -> i64 {
-                move |c: &[isize]| {
-                    c.iter()
-                        .enumerate()
-                        .map(|(size, cnt)| *cnt as usize * (size + 1).pow(pow))
-                        .sum::<usize>() as i64
-                }
-            }
-            // New candidate score function:
-            // Maximize the product of the number of empty slots in each bin.
-            #[allow(unused)]
-            let maybe_optimal = |counts: &[isize]| -> i64 {
-                if counts[K] > 0 {
-                    return i64::MAX;
-                }
-                let q = counts
-                    .iter()
-                    .enumerate()
-                    .map(|(size, &cnt)| cnt as f64 * lg[K - 1 - size])
-                    .sum::<f64>();
-                (-q) as i64
-            };
-            let f = pow(7);
-            // let f = maybe_optimal;
 
             // hash all keys with all seeds, and collect bin size statistics
             let mut vals = vec![(usize::MAX, i64::MAX, usize::MAX)];
@@ -350,7 +345,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     for i in 1..=K {
                         counts[i] += counts[i - 1];
                     }
-                    f(&counts)
+                    debug_assert_eq!(counts[K], 0);
+                    f(&counts[..K])
                 } else {
                     0
                 };
@@ -450,7 +446,10 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 "Bumping {bumped} keys = {:>.1}%",
                 bumped as f32 / n as f32 * 100.0
             );
-            assert!(bumped < n / 10, "Too many bumped keys.");
+            assert!(
+                bumped < n / 10,
+                "Too many bumped keys: {bumped} out of {n}."
+            );
             self.bumped = Some(Box::new(Self::new::<T>(
                 // use a lazy load factor for fallback
                 0.5,
