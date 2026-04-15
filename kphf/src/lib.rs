@@ -2,7 +2,7 @@
 #![feature(widening_mul, adt_const_params, generic_const_exprs)]
 
 use std::fmt::Debug;
-use sux::traits::BitVecOpsMut;
+use sux::{traits::BitVecOpsMut, utils::prefetch_index};
 
 pub trait KphfT {
     fn name(&self) -> &'static str;
@@ -484,6 +484,11 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         self.bumped.as_ref().map_or(0, |b| b.n)
     }
 
+    #[inline(always)]
+    pub fn prefetch<T: Key>(&self, key: T) {
+        let bi = self.to_bucket(key);
+        prefetch_index(&self.seeds, bi + 7);
+    }
     #[inline(always)]
     pub fn get<T: Key>(&self, key: T) -> usize {
         let bi = self.to_bucket(key);
