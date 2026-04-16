@@ -228,9 +228,6 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             let mut backtracks = 0;
             let mut i = 0;
 
-            let mut lg: [f64; K] = std::array::from_fn(|i| (i as f64).log2());
-            lg[0] = f64::MIN;
-
             let mut bumped_keys: Vec<T> = vec![];
 
             let mut bins = vec![];
@@ -238,32 +235,22 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
             // eprintln!("Start construction");
 
-            // score function
-            fn pow<const K: usize>(pow: u32) -> impl Fn(&[isize]) -> i64 {
-                let pows: [isize; K] = std::array::from_fn(|i| (i as isize + 1).pow(pow));
-                move |c: &[isize]| {
-                    c.iter()
-                        .enumerate()
-                        .map(|(size, cnt)| *cnt * pows[size])
-                        .sum::<isize>() as i64
-                }
-            }
-            // New candidate score function:
-            // Maximize the product of the number of empty slots in each bin.
-            #[allow(unused)]
-            let maybe_optimal = |counts: &[isize]| -> i64 {
-                if counts[K] > 0 {
-                    return i64::MAX;
-                }
-                let q = counts
-                    .iter()
-                    .enumerate()
-                    .map(|(size, &cnt)| cnt as f64 * lg[K - 1 - size])
-                    .sum::<f64>();
-                (-q) as i64
-            };
-            let f = pow::<K>(7);
-            // let f = maybe_optimal;
+            // Score functions: Use 2^i by default.
+            let score_fn: [i64; K] = std::array::from_fn(|i| 1i64 << i);
+
+            // Good:
+            // i^6
+            // let score_fn: [i64; K] = std::array::from_fn(|i| (i as i64).pow(6));
+            // 1.5^i
+            // let score_fn: [i64; K] = std::array::from_fn(|i| (1.5f32).powf(i as f32) as i64);
+
+            // Bad:
+            // i
+            // let score_fn: [i64; K] = std::array::from_fn(|i| i as i64);
+            // log(K - i)
+            // let score_fn: [i64; K] = std::array::from_fn(|i| (-((K - i) as f64).log2() * 1000.) as i64);
+
+            // eprintln!("score_fn: {score_fn:?}");
 
             'bucket: while i < self.num_buckets {
                 let idx = perm[i];
@@ -294,7 +281,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
                 let mut mask = u64::MAX;
                 let mut max_count: usize;
-                let mut counts = vec![0isize; K + 1];
+                let mut counts = vec![0i64; K + 1];
 
                 'seed: for seed in 0..256_usize {
                     if seed % 64 == 0 {
@@ -374,7 +361,11 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                             counts[i] += counts[i - 1];
                         }
                         debug_assert_eq!(counts[K], 0);
-                        f(&counts[..K])
+
+                        // inner product with weights
+                        std::iter::zip(&counts[..K], &score_fn)
+                            .map(|(&c, &w)| c * w)
+                            .sum()
                     } else {
                         0
                     };
