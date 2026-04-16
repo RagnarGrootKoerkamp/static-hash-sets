@@ -31,7 +31,7 @@ type T = u64;
 const BIN_SIZE: usize = 8;
 type S = wide::i64x4;
 
-const QUERIES: usize = 5_000_000;
+const QUERIES: usize = 10_000_000;
 const REPEATS: usize = 3;
 const THREADS: [usize; 2] = [1, 12];
 // const THREADS: [usize; 0] = [];
@@ -47,40 +47,40 @@ fn main() {
         .collect::<Vec<_>>();
 
     let hashers = vec![
-        // (
-        //     |_alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-        //         Box::new(hashbrown::HashSet::<T, FxHasher>::from_iter(
-        //             keys.iter().cloned(),
-        //         ))
-        //     } as fn(f32, &[T]) -> Box<dyn HashSet>,
-        //     vec![0.5],
-        // ),
-        // (
-        //     |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-        //         Box::new(U64HashSet::new(1. / alpha, keys))
-        //     },
-        //     vec![0.7, 0.8, 0.9, 0.95],
-        // ),
-        // (
-        //     |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-        //         // TODO: PrefetchOneEager, PrefetchBoth
-        //         Box::new(CuckooSet::<{ Mode::PrefetchOneLazy }>::new(
-        //             1. / alpha,
-        //             keys,
-        //         ))
-        //     },
-        //     vec![0.7, 0.8, 0.9, 0.99],
-        // ),
-        // (
-        //     |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-        //         Box::new(KphfSet::<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>::new(
-        //             alpha,
-        //             2.0 * space_lower_bound(BIN_SIZE, alpha),
-        //             keys,
-        //         ))
-        //     },
-        //     vec![0.7, 0.8, 0.9, 0.99],
-        // ),
+        (
+            |_alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
+                Box::new(hashbrown::HashSet::<T, FxHasher>::from_iter(
+                    keys.iter().cloned(),
+                ))
+            } as fn(f32, &[T]) -> Box<dyn HashSet>,
+            vec![0.5],
+        ),
+        (
+            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
+                Box::new(U64HashSet::new(1. / alpha, keys))
+            },
+            vec![0.7, 0.8, 0.9, 0.95],
+        ),
+        (
+            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
+                // TODO: PrefetchOneEager, PrefetchBoth
+                Box::new(CuckooSet::<{ Mode::PrefetchOneLazy }>::new(
+                    1. / alpha,
+                    keys,
+                ))
+            } as fn(f32, &[T]) -> Box<dyn HashSet>,
+            vec![0.7, 0.8, 0.9, 0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
+                Box::new(KphfSet::<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>::new(
+                    alpha,
+                    2.0 * space_lower_bound(BIN_SIZE, alpha),
+                    keys,
+                ))
+            },
+            vec![0.7, 0.8, 0.9, 0.99],
+        ),
         (
             |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
                 Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
@@ -94,6 +94,16 @@ fn main() {
         (
             |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
                 Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
+                    alpha,
+                    2.0 * space_lower_bound(BIN_SIZE, alpha),
+                    keys,
+                ))
+            },
+            vec![0.7, 0.8, 0.9, 0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
+                Box::new(KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::new(
                     alpha,
                     2.0 * space_lower_bound(BIN_SIZE, alpha),
                     keys,
