@@ -20,7 +20,7 @@ fn test() {
         )) as Box<dyn HashSet>,
         Box::new(KphfSet::<{ kphf::Mode::Linear }, BIN_SIZE>::new(
             0.9,
-            2.0 * space_lower_bound(BIN_SIZE, 0.9),
+            2.5 * space_lower_bound(BIN_SIZE, 0.9),
             &[],
         )) as Box<dyn HashSet>,
         Box::new(KphfSet::<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>::new(
