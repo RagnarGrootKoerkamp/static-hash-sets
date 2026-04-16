@@ -7,6 +7,9 @@ pub trait HashSet: Send + Sync {
     fn new(&self, keys: &[T]) -> Box<dyn HashSet>;
     /// Bytes of the entire data structure.
     fn allocation_size(&self) -> usize;
+    fn kphf_target_bits_per_key(&self) -> f32 {
+        0.0
+    }
     /// Bytes of the KPHF only.
     fn kphf_size(&self) -> usize {
         0

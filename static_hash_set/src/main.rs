@@ -135,6 +135,7 @@ pub struct Result {
     build: f32,
     bumped_frac: f32,
     overhead: f32,
+    kphf_target_bits_per_key: f32,
     kphf_bits_per_key: f32,
     threads: usize,
     metric: &'static str,
@@ -191,6 +192,7 @@ impl Bencher {
             let build = build / self.n as f32;
             let bumped_frac = h.bumped_frac();
             let bits_per_key = h.allocation_size() as f32 * 8.0 / self.n as f32;
+            let kphf_target_bits_per_key = h.kphf_target_bits_per_key();
             let kphf_bits_per_key = h.kphf_size() as f32 * 8.0 / self.n as f32;
             let overhead = bits_per_key / T::BITS as f32;
             let pf = h.has_prefetch();
@@ -229,6 +231,7 @@ impl Bencher {
                         build,
                         bumped_frac,
                         overhead,
+                        kphf_target_bits_per_key,
                         kphf_bits_per_key,
                         q01: query[0],
                         q10: 0.0,

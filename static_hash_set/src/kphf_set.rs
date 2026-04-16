@@ -136,6 +136,9 @@ impl<const MODE: kphf::Mode, const K: usize> HashSet for KphfSet<MODE, K> {
     fn allocation_size(&self) -> usize {
         std::mem::size_of_val(&*self.table) + self.kphf.bits_used() / 8
     }
+    fn kphf_target_bits_per_key(&self) -> f32 {
+        self.bits_per_key
+    }
     fn kphf_size(&self) -> usize {
         self.kphf.bits_used() / 8
     }
