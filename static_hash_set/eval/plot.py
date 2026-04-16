@@ -6,83 +6,50 @@ import pandas as pd
 import math
 
 w = 64
-name = "64"
+name = "new2"
 
 data = pd.read_csv(f"out-{name}.csv")
 
-data = data[data["metric"] >= "prefetch"]
+data = data[data["metric"] == "prefetch"]
 
 # data = data[data["h"].str.contains("KphfSet")]
 
 
-def make_category(row):
-    if row["h"] == "FxHashSet":
-        return "1.4-2.8"
-    return str(math.floor(row["overhead"] * 10) / 10)
-
-
-data["target_overhead"] = data.apply(make_category, axis=1)
 data["label"] = data.apply(
-    lambda row: row["h"] + " (" + row["target_overhead"] + "x)", axis=1
+    lambda row: row["h"] + " (" + str(row["alpha"]) + "x)", axis=1
 )
 
 queries = ["q01", "q50", "q99"]
-group_columns = ["h", "pf", "threads", "metric", "n", "target_overhead", "label"]
+group_columns = ["h", "pf", "threads", "metric", "n", "alpha", "label"]
 data = data.groupby(group_columns, as_index=False)[["build", *queries]].median()
 
 labels = data["label"].unique()
 print(labels)
 palette = sns.color_palette(n_colors=len(labels))
 label_color = {
-    "FxHashSet (1.4-2.8x)": "red",
-    "U64HashSet (1.4x)": "green",
-    "U64HashSet (1.3x)": "green",
-    "U64HashSet (1.2x)": "green",
-    "U64HashSet (1.1x)": "green",
-    "CuckooSet<PrefetchOneLazy> (1.4x)": "orange",
-    "CuckooSet<PrefetchOneLazy> (1.2x)": "orange",
-    "CuckooSet<PrefetchOneLazy> (1.1x)": "orange",
-    "CuckooSet<PrefetchOneEager> (1.4x)": "white",
-    "CuckooSet<PrefetchOneEager> (1.2x)": "white",
-    "CuckooSet<PrefetchOneEager> (1.1x)": "white",
-    "CuckooSet<PrefetchBoth> (1.4x)": "white",
-    "CuckooSet<PrefetchBoth> (1.2x)": "white",
-    "CuckooSet<PrefetchBoth> (1.1x)": "white",
-    "KphfSet<SortBump> (1.4x)": "blue",
-    "KphfSet<SortBump> (1.2x)": "blue",
-    "KphfSet<SortBump> (1.1x)": "blue",
-    "KphfSet<SortBumpGreedy> (1.4x)": "cyan",
-    "KphfSet<SortBumpGreedy> (1.2x)": "cyan",
-    "KphfSet<SortBumpGreedy> (1.1x)": "cyan",
+    "FxHashSet": "red",
+    "U64HashSet": "green",
+    "U64HashSet": "green",
+    "CuckooSet<PrefetchOneLazy>": "orange",
+    "CuckooSet<PrefetchOneEager>": "white",
+    "CuckooSet<PrefetchBoth>": "white",
+    "KphfSet<SortBump>": "blue",
+    "KphfSet<SortBumpGreedy>": "cyan",
 }
 label_lw = {
-    "FxHashSet (1.4-2.8x)": 2,
-    "U64HashSet (1.4x)": 2,
-    "U64HashSet (1.3x)": 1.75,
-    "U64HashSet (1.2x)": 1.5,
-    "U64HashSet (1.1x)": 1,
-    "CuckooSet<PrefetchOneLazy> (1.4x)": 2,
-    "CuckooSet<PrefetchOneLazy> (1.2x)": 1.5,
-    "CuckooSet<PrefetchOneLazy> (1.1x)": 1,
-    "CuckooSet<PrefetchOneEager> (1.4x)": 2,
-    "CuckooSet<PrefetchOneEager> (1.2x)": 1.5,
-    "CuckooSet<PrefetchOneEager> (1.1x)": 1,
-    "CuckooSet<PrefetchBoth> (1.4x)": 2,
-    "CuckooSet<PrefetchBoth> (1.2x)": 1.5,
-    "CuckooSet<PrefetchBoth> (1.1x)": 1,
-    "KphfSet<SortBump> (1.4x)": 2,
-    "KphfSet<SortBump> (1.2x)": 1.5,
-    "KphfSet<SortBump> (1.1x)": 1,
-    "KphfSet<SortBumpGreedy> (1.4x)": 2,
-    "KphfSet<SortBumpGreedy> (1.2x)": 1.5,
-    "KphfSet<SortBumpGreedy> (1.1x)": 1,
+    0.5: 2,
+    0.7: 1.75,
+    0.8: 1.5,
+    0.9: 1,
+    0.95: 0.75,
+    0.99: 0.5,
 }
 
 plt.close()
 
 titles = ["p=0.01", "p=0.50", "p=0.99"]
 # thread_counts = sorted(data["threads"].unique())
-thread_counts = [1, 6, 12]
+thread_counts = data["threads"].unique()
 target_latencies = {
     1: 7.5,
     6: 2.5,
@@ -94,15 +61,16 @@ cache_labels = ["L3  ", "  RAM"]
 nrows = len(thread_counts)
 ncols = len(queries)
 fig, axes = plt.subplots(
-    nrows, ncols, figsize=(5 * ncols, 4 * nrows), sharey="row", sharex=True
+    nrows, ncols, figsize=(5 * ncols, 4 * nrows), sharey=False, sharex=True
 )
 
 for ri, threads in enumerate(thread_counts):
     thread_data = data[data["threads"] == threads]
+    groups = thread_data.groupby(["h", "alpha"])
     for ci, (q, title) in enumerate(zip(queries, titles)):
         ax = axes[ri][ci]
-        for label in labels:
-            subset = thread_data[thread_data["label"] == label]
+
+        for (h, alpha), subset in groups:
             sns.lineplot(
                 data=subset,
                 x="n",
@@ -110,18 +78,22 @@ for ri, threads in enumerate(thread_counts):
                 ax=ax,
                 estimator=None,
                 errorbar=None,
-                color=label_color[label],
-                lw=label_lw[label],
-                label=label,
+                color=label_color[h],
+                lw=label_lw[alpha],
+                label=h + " " + str(alpha),
             )
         if ri == 0:
             ax.set_title(title)
+
         ax.set_xlabel("n" if ri == nrows - 1 else "")
-        ax.set_ylabel(f"threads={threads}\nns / query" if ci == 0 else "")
-        ax.set_ylim(0, 60 / threads)
         ax.set_xscale("log", base=2)
+
         ax.grid(True, which="both", ls="--", lw=0.5)
+
+        ax.set_ylabel(f"threads={threads}\nns / query" if ci == 0 else "")
+        ax.set_ylim(0, 30 / min(threads, 6))
         ax.axhline(y=target_latencies[threads], color="red", lw=1, ls="--", zorder=0)
+
         for s, l in zip(sizes, cache_labels):
             ax.axvline(x=s / 4, c="black", lw=1, ls="--")
             ax.text(s / 4, ax.get_ylim()[0], l, ha="right", va="bottom", fontsize=8)
