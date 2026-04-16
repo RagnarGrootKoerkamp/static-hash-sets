@@ -215,7 +215,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         let mut bin_sizes = vec![0u8; self.num_bins];
         let mut non_full_bins = sux::bit_vec![true; self.num_bins];
 
-        let mut seeds = vec![0u8; self.num_buckets + 7];
+        // Do not initialize with 0, because that indicates bumping of empty buckets.
+        let mut seeds = vec![255u8; self.num_buckets + 7];
         let mut tries = vec![0u8; self.num_buckets];
 
         let mut bumped = 0;
@@ -290,7 +291,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             let mut max_count: usize;
             let mut counts = vec![0isize; K + 1];
 
-            'seed: for seed in 0..256_usize - if bump { 1 } else { 0 } {
+            'seed: for seed in 0..256_usize {
                 if seed % 64 == 0 {
                     mask = u64::MAX;
                     bins.clear();
@@ -333,12 +334,16 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     }
                     // eprintln!("Bin sizes for seed {seed}: {}", bins.len());
                 }
+                if bump && seed == 0 {
+                    // this one is reserved for bumping, but we need it for the target bins.
+                    continue 'seed;
+                }
                 if (mask >> (seed % 64)) & 1 == 0 {
                     continue 'seed;
                 }
-                if i == 0 && (seed % 64) != 0 {
+                if i == 0 && (!bump || seed != 1) && (seed % 64) != 0 {
                     // For the first bucket, everything is still empty so no use in shifting.
-                    continue;
+                    continue 'seed;
                 }
 
                 // More refined check that considers within-bucket collisions.
@@ -426,11 +431,15 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 bumped += bucket.len();
                 i += 1;
                 bumped_keys.extend_from_slice(bucket);
-                seeds[idx + 7] = 255;
+                // Bumped keys get seed 0
+                seeds[idx + 7] = 0;
                 continue;
             }
 
             let seed = best.2;
+            if bump {
+                assert!(seed > 0);
+            }
             assert!(seed < 256);
             seeds[idx + 7] = seed as u8;
 
@@ -508,7 +517,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         if matches!(
             MODE,
             Mode::LinearBump | Mode::SortBump | Mode::LinearBumpGreedy | Mode::SortBumpGreedy
-        ) && seed == 255
+        ) && seed == 0
         {
             cold_path();
             self.num_bins + self.bumped.as_ref().unwrap().get(key)
