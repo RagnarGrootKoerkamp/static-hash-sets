@@ -102,11 +102,13 @@ fn main() {
             vec![0.7, 0.8, 0.9],
         ),
     ];
-    for n in ns {
-        let bencher = Bencher::new(n);
-        for (constructor, alphas) in &hashers {
-            for &alpha in alphas {
-                bencher.bench(*constructor, alpha);
+    for repeat in 0..REPEATS {
+        for &n in &ns {
+            let bencher = Bencher::new(n);
+            for (constructor, alphas) in &hashers {
+                for &alpha in alphas {
+                    bencher.bench(*constructor, alpha, repeat);
+                }
             }
         }
     }
@@ -185,70 +187,68 @@ impl Bencher {
         Self { n, keys, queries }
     }
 
-    pub fn bench(&self, constructor: fn(f32, &[T]) -> Box<dyn HashSet>, alpha: f32) {
-        for repeat in 0..REPEATS {
-            let (build, ref h) = time(|| constructor(alpha, &self.keys));
-            let name = h.name();
-            let build = build / self.n as f32;
-            let bumped_frac = h.bumped_frac();
-            let bits_per_key = h.allocation_size() as f32 * 8.0 / self.n as f32;
-            let kphf_target_bits_per_key = h.kphf_target_bits_per_key();
-            let kphf_bits_per_key = h.kphf_size() as f32 * 8.0 / self.n as f32;
-            let overhead = bits_per_key / T::BITS as f32;
-            let pf = h.has_prefetch();
-            for &threads in &THREADS {
-                for metric in MODES {
-                    let mut query = [0f32; 5];
-                    for (qi, &_p) in PERCENTILES.iter().enumerate() {
-                        let start = std::time::Instant::now();
-                        let worker = |qs: &[T]| match metric {
-                            "loop" => {
-                                let c = h.count_loop(&qs);
-                                black_box(c);
-                            }
-                            "prefetch" => {
-                                let c = h.count_prefetch(&qs);
-                                black_box(c);
-                            }
-                            _ => unreachable!(),
-                        };
-                        if threads == 1 {
-                            let qs = &self.queries[0][repeat][qi];
-                            worker(qs);
-                        } else {
-                            std::thread::scope(|scope| {
-                                for t in 0..threads {
-                                    let qs = &self.queries[t][repeat][qi];
-                                    scope.spawn(move || worker(qs));
-                                }
-                            });
+    pub fn bench(&self, constructor: fn(f32, &[T]) -> Box<dyn HashSet>, alpha: f32, repeat: usize) {
+        let (build, ref h) = time(|| constructor(alpha, &self.keys));
+        let name = h.name();
+        let build = build / self.n as f32;
+        let bumped_frac = h.bumped_frac();
+        let bits_per_key = h.allocation_size() as f32 * 8.0 / self.n as f32;
+        let kphf_target_bits_per_key = h.kphf_target_bits_per_key();
+        let kphf_bits_per_key = h.kphf_size() as f32 * 8.0 / self.n as f32;
+        let overhead = bits_per_key / T::BITS as f32;
+        let pf = h.has_prefetch();
+        for &threads in &THREADS {
+            for metric in MODES {
+                let mut query = [0f32; 5];
+                for (qi, &_p) in PERCENTILES.iter().enumerate() {
+                    let start = std::time::Instant::now();
+                    let worker = |qs: &[T]| match metric {
+                        "loop" => {
+                            let c = h.count_loop(&qs);
+                            black_box(c);
                         }
-                        query[qi] = start.elapsed().as_nanos() as f32 / (threads * QUERIES) as f32;
-                    }
-                    let result = Result {
-                        h: name.to_string(),
-                        pf,
-                        n: self.n,
-                        alpha,
-                        repeat,
-                        threads,
-                        metric,
-                        build,
-                        bumped_frac,
-                        overhead,
-                        kphf_target_bits_per_key,
-                        kphf_bits_per_key,
-                        q01: query[0],
-                        q10: 0.0,
-                        q50: query[1],
-                        q90: 0.0,
-                        q99: query[2],
+                        "prefetch" => {
+                            let c = h.count_prefetch(&qs);
+                            black_box(c);
+                        }
+                        _ => unreachable!(),
                     };
-                    CSV_WRITER.with_borrow_mut(|w| {
-                        w.serialize(&result).unwrap();
-                        w.flush().unwrap();
-                    });
+                    if threads == 1 {
+                        let qs = &self.queries[0][repeat][qi];
+                        worker(qs);
+                    } else {
+                        std::thread::scope(|scope| {
+                            for t in 0..threads {
+                                let qs = &self.queries[t][repeat][qi];
+                                scope.spawn(move || worker(qs));
+                            }
+                        });
+                    }
+                    query[qi] = start.elapsed().as_nanos() as f32 / (threads * QUERIES) as f32;
                 }
+                let result = Result {
+                    h: name.to_string(),
+                    pf,
+                    n: self.n,
+                    alpha,
+                    repeat,
+                    threads,
+                    metric,
+                    build,
+                    bumped_frac,
+                    overhead,
+                    kphf_target_bits_per_key,
+                    kphf_bits_per_key,
+                    q01: query[0],
+                    q10: 0.0,
+                    q50: query[1],
+                    q90: 0.0,
+                    q99: query[2],
+                };
+                CSV_WRITER.with_borrow_mut(|w| {
+                    w.serialize(&result).unwrap();
+                    w.flush().unwrap();
+                });
             }
         }
     }
