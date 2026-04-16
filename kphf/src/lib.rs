@@ -117,11 +117,11 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
     fn to_bucket<T: Key>(&self, key: T) -> usize {
         let x = fxhash::hash64(&(key ^ T::from_seed(self.salt))) as usize;
-        // quadratic: x^2
         let sq = mul(x, x);
-        // x**6
-        let six = mul(mul(sq, sq), sq);
-        six.widening_mul(self.num_buckets).1
+        let four = mul(sq, sq);
+        // add an epsilon to avoid too large buckets?
+        // let four = four + ((x - four) >> 4);
+        four.widening_mul(self.num_buckets).1
     }
 
     #[inline(always)]
