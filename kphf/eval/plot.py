@@ -234,7 +234,7 @@ def plot_dataset(data_path: Path, output_path: Path) -> None:
                     color="w",
                     markerfacecolor="black",
                     markersize=5,
-                    label="factor$= 1.0/1.2/1.4/1.8/2.0/2.4$",
+                    label="factor$= 1.0/1.2/1.4/1.8/2.0/2.2/2.4$",
                     linestyle="none",
                 )
                 factor_handle = Line2D(
