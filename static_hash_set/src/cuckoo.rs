@@ -17,9 +17,8 @@ type Hasher = BuildHasherDefault<rustc_hash::FxHasher>;
 
 #[derive(PartialEq, Eq, Debug, std::marker::ConstParamTy)]
 pub enum Mode {
-    PrefetchBoth,
-    PrefetchOneLazy,
-    PrefetchOneEager,
+    Eager,
+    Lazy,
 }
 
 pub struct CuckooSet<const MODE: Mode> {
@@ -112,9 +111,8 @@ impl<const MODE: Mode> CuckooSet<MODE> {
     #[inline(always)]
     pub fn prefetch(&self, key: T) {
         match MODE {
-            Mode::PrefetchBoth => self.prefetch_both(key),
-            Mode::PrefetchOneLazy => self.prefetch_first(key),
-            Mode::PrefetchOneEager => self.prefetch_first(key),
+            Mode::Eager => self.prefetch_both(key),
+            Mode::Lazy => self.prefetch_first(key),
         }
     }
 
@@ -151,9 +149,8 @@ impl<const MODE: Mode> CuckooSet<MODE> {
     #[inline(always)]
     pub fn contains(&self, key: T) -> bool {
         match MODE {
-            Mode::PrefetchBoth => self.contains_eager(key),
-            Mode::PrefetchOneLazy => self.contains_lazy(key),
-            Mode::PrefetchOneEager => self.contains_eager(key),
+            Mode::Eager => self.contains_eager(key),
+            Mode::Lazy => self.contains_lazy(key),
         }
     }
 
@@ -205,9 +202,8 @@ impl<const MODE: Mode> CuckooSet<MODE> {
 impl<const MODE: Mode> HashSet for CuckooSet<MODE> {
     fn name(&self) -> &'static str {
         match MODE {
-            Mode::PrefetchBoth => "CuckooSet<PrefetchBoth>",
-            Mode::PrefetchOneLazy => "CuckooSet<PrefetchOneLazy>",
-            Mode::PrefetchOneEager => "CuckooSet<PrefetchOneEager>",
+            Mode::Eager => "CuckooSet<PrefetchBoth>",
+            Mode::Lazy => "CuckooSet<PrefetchOneLazy>",
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {

@@ -62,11 +62,13 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-                // TODO: PrefetchOneEager, PrefetchBoth
-                Box::new(CuckooSet::<{ Mode::PrefetchOneLazy }>::new(
-                    1. / alpha,
-                    keys,
-                ))
+                Box::new(CuckooSet::<{ Mode::Eager }>::new(1. / alpha, keys))
+            } as fn(f32, &[T]) -> Box<dyn HashSet>,
+            vec![0.7, 0.8, 0.9, 0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
+                Box::new(CuckooSet::<{ Mode::Lazy }>::new(1. / alpha, keys))
             } as fn(f32, &[T]) -> Box<dyn HashSet>,
             vec![0.7, 0.8, 0.9, 0.99],
         ),
