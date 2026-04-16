@@ -33,6 +33,7 @@ label_color = {
     "CuckooSet<PrefetchOneLazy>": "orange",
     "CuckooSet<PrefetchOneEager>": "white",
     "CuckooSet<PrefetchBoth>": "white",
+    "KphfSet<Sort>": "lime",
     "KphfSet<SortBump>": "blue",
     "KphfSet<SortBumpGreedy>": "cyan",
 }

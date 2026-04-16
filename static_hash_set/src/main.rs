@@ -76,7 +76,7 @@ fn main() {
             |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
                 Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
                     alpha,
-                    1.6 * space_lower_bound(BIN_SIZE, alpha),
+                    1.5 * space_lower_bound(BIN_SIZE, alpha),
                     keys,
                 ))
             } as fn(f32, &[T]) -> Box<dyn HashSet>,
@@ -86,7 +86,7 @@ fn main() {
             |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
                 Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
                     alpha,
-                    2.0 * space_lower_bound(BIN_SIZE, alpha),
+                    1.6 * space_lower_bound(BIN_SIZE, alpha),
                     keys,
                 ))
             },
@@ -96,7 +96,7 @@ fn main() {
             |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
                 Box::new(KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::new(
                     alpha,
-                    2.0 * space_lower_bound(BIN_SIZE, alpha),
+                    1.6 * space_lower_bound(BIN_SIZE, alpha),
                     keys,
                 ))
             },
