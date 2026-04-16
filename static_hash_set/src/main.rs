@@ -43,7 +43,6 @@ fn main() {
     let ns = (0..)
         .map(|i| (1_000_000. * 2.5f32.powi(i)) as usize)
         .take_while(|x| *x <= 100_000_000)
-        .take(1)
         .collect::<Vec<_>>();
 
     let hashers = vec![
