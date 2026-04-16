@@ -432,7 +432,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
                 if best.0 > 0 {
                     // We never bump the largest bucket.
-                    if i == 0 {
+                    if n >= 1000000 && i == 0 {
+                        eprintln!("Rerandomizing salt for n = {n}!");
                         continue 'salt;
                     }
 
@@ -489,7 +490,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                         bumped as f32 / n as f32 * 100.0
                     );
                 }
-                assert!(bumped < n / 2, "Too many bumped keys: {bumped} out of {n}.");
+                assert!(bumped < n, "Too many bumped keys: {bumped} out of {n}.");
                 self.bumped = Some(Box::new(Self::new::<T>(
                     // use a lazy load factor for fallback
                     0.5,

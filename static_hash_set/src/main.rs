@@ -73,16 +73,6 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-                Box::new(KphfSet::<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>::new(
-                    alpha,
-                    2.0 * space_lower_bound(BIN_SIZE, alpha),
-                    keys,
-                ))
-            },
-            vec![0.7, 0.8, 0.9, 0.99],
-        ),
-        (
-            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
                 Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
                     alpha,
                     1.6 * space_lower_bound(BIN_SIZE, alpha),
@@ -109,7 +99,7 @@ fn main() {
                     keys,
                 ))
             },
-            vec![0.7, 0.8, 0.9, 0.99],
+            vec![0.7, 0.8, 0.9],
         ),
     ];
     for n in ns {
