@@ -152,7 +152,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             num_buckets,
             seeds: vec![],
             bumped: None,
-            salt: rand::random(),
+            salt: 0, // initialized in build.
         };
         kphf.build(keys).map(|_| kphf)
     }
@@ -172,321 +172,334 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         let n = self.n;
 
-        // 1. count keys per bucket
-        let mut bucket_sizes = vec![0; self.num_buckets + 1];
-        for key in keys {
-            let bi = self.to_bucket(*key);
-            bucket_sizes[bi] += 1;
-        }
-        // eprintln!("KEYS: {keys:?}");
-        // 2. get start positions
-        let mut bucket_starts = bucket_sizes;
-        let mut sum = 0;
-        for i in 0..=self.num_buckets {
-            let x = sum;
-            sum += bucket_starts[i];
-            bucket_starts[i] = x;
-        }
-        // 3. write keys into buckets
-        let mut bucketed_keys = vec![T::default(); n];
-        for key in keys {
-            let bi = self.to_bucket(*key);
-            bucketed_keys[bucket_starts[bi]] = *key;
-            bucket_starts[bi] += 1;
-        }
-        // 4. restore bucket_starts
-        for i in (1..=self.num_buckets).rev() {
-            bucket_starts[i] = bucket_starts[i - 1];
-        }
-        bucket_starts[0] = 0;
-        let keys = bucketed_keys;
+        // We loop here until we find a salt for which bucket 0 succeeds.
+        // Specifically, there are only 4 really distinct seeds for bucket 0 (0/64/128/192), so we may have to retry.
+        'salt: loop {
+            self.salt = rand::random();
 
-        // keys.sort_by_cached_key(|&key| (self.to_bucket(key), key));
-        // keys.dedup();
+            // 1. count keys per bucket
+            let mut bucket_sizes = vec![0; self.num_buckets + 1];
+            for key in keys {
+                let bi = self.to_bucket(*key);
+                bucket_sizes[bi] += 1;
+            }
+            // eprintln!("KEYS: {keys:?}");
+            // 2. get start positions
+            let mut bucket_starts = bucket_sizes;
+            let mut sum = 0;
+            for i in 0..=self.num_buckets {
+                let x = sum;
+                sum += bucket_starts[i];
+                bucket_starts[i] = x;
+            }
+            // 3. write keys into buckets
+            let mut bucketed_keys = vec![T::default(); n];
+            for key in keys {
+                let bi = self.to_bucket(*key);
+                bucketed_keys[bucket_starts[bi]] = *key;
+                bucket_starts[bi] += 1;
+            }
+            // 4. restore bucket_starts
+            for i in (1..=self.num_buckets).rev() {
+                bucket_starts[i] = bucket_starts[i - 1];
+            }
+            bucket_starts[0] = 0;
+            let keys = bucketed_keys;
 
-        // 3. Sort buckets by decreasing size
-        let mut perm = (0..self.num_buckets).collect::<Vec<_>>();
+            // keys.sort_by_cached_key(|&key| (self.to_bucket(key), key));
+            // keys.dedup();
 
-        if sort {
-            perm.sort_by_key(|&i| std::cmp::Reverse(bucket_starts[i + 1] - bucket_starts[i]));
-        }
+            // 3. Sort buckets by decreasing size
+            let mut perm = (0..self.num_buckets).collect::<Vec<_>>();
 
-        // 4. init bin sizes
-        let mut bin_sizes = vec![0u8; self.num_bins];
-        let mut non_full_bins = sux::bit_vec![true; self.num_bins];
+            if sort {
+                perm.sort_by_key(|&i| std::cmp::Reverse(bucket_starts[i + 1] - bucket_starts[i]));
+            }
 
-        // Do not initialize with 0, because that indicates bumping of empty buckets.
-        let mut seeds = vec![255u8; self.num_buckets + 7];
-        let mut tries = vec![0u8; self.num_buckets];
+            // 4. init bin sizes
+            let mut bin_sizes = vec![0u8; self.num_bins];
+            let mut non_full_bins = sux::bit_vec![true; self.num_bins];
 
-        let mut bumped = 0;
-        let mut backtracks = 0;
-        let mut i = 0;
+            // Do not initialize with 0, because that indicates bumping of empty buckets.
+            let mut seeds = vec![255u8; self.num_buckets + 7];
+            let mut tries = vec![0u8; self.num_buckets];
 
-        let mut lg: [f64; K] = std::array::from_fn(|i| (i as f64).log2());
-        lg[0] = f64::MIN;
+            let mut bumped = 0;
+            let mut backtracks = 0;
+            let mut i = 0;
 
-        let mut bumped_keys: Vec<T> = vec![];
+            let mut lg: [f64; K] = std::array::from_fn(|i| (i as f64).log2());
+            lg[0] = f64::MIN;
 
-        let mut bins = vec![];
-        let mut bin_counts = vec![];
+            let mut bumped_keys: Vec<T> = vec![];
 
-        // eprintln!("Start construction");
+            let mut bins = vec![];
+            let mut bin_counts = vec![];
 
-        // score function
-        fn pow<const K: usize>(pow: u32) -> impl Fn(&[isize]) -> i64 {
-            let pows: [isize; K] = std::array::from_fn(|i| (i as isize + 1).pow(pow));
-            move |c: &[isize]| {
-                c.iter()
+            // eprintln!("Start construction");
+
+            // score function
+            fn pow<const K: usize>(pow: u32) -> impl Fn(&[isize]) -> i64 {
+                let pows: [isize; K] = std::array::from_fn(|i| (i as isize + 1).pow(pow));
+                move |c: &[isize]| {
+                    c.iter()
+                        .enumerate()
+                        .map(|(size, cnt)| *cnt * pows[size])
+                        .sum::<isize>() as i64
+                }
+            }
+            // New candidate score function:
+            // Maximize the product of the number of empty slots in each bin.
+            #[allow(unused)]
+            let maybe_optimal = |counts: &[isize]| -> i64 {
+                if counts[K] > 0 {
+                    return i64::MAX;
+                }
+                let q = counts
+                    .iter()
                     .enumerate()
-                    .map(|(size, cnt)| *cnt * pows[size])
-                    .sum::<isize>() as i64
-            }
-        }
-        // New candidate score function:
-        // Maximize the product of the number of empty slots in each bin.
-        #[allow(unused)]
-        let maybe_optimal = |counts: &[isize]| -> i64 {
-            if counts[K] > 0 {
-                return i64::MAX;
-            }
-            let q = counts
-                .iter()
-                .enumerate()
-                .map(|(size, &cnt)| cnt as f64 * lg[K - 1 - size])
-                .sum::<f64>();
-            (-q) as i64
-        };
-        let f = pow::<K>(7);
-        // let f = maybe_optimal;
-
-        'bucket: while i < self.num_buckets {
-            let idx = perm[i];
-            let start = bucket_starts[idx];
-            let end = bucket_starts[idx + 1];
-            let len = end - start;
-
-            if len == 0 {
-                i += 1;
-                continue 'bucket;
-            }
-
-            let bucket = &keys[start..end];
-
-            // hash all keys with all seeds, and collect bin size statistics
-            let mut vals = vec![(usize::MAX, i64::MAX, usize::MAX)];
-
-            let seed_offset = if consensus {
-                u64::from_be_bytes(seeds[i..i + 8].try_into().unwrap())
-            } else {
-                0
+                    .map(|(size, &cnt)| cnt as f64 * lg[K - 1 - size])
+                    .sum::<f64>();
+                (-q) as i64
             };
-            assert!(
-                seed_offset % 256 == 0,
-                "{seed_offset:>0x} {:?}",
-                seed_offset.to_be_bytes()
-            );
+            let f = pow::<K>(7);
+            // let f = maybe_optimal;
 
-            let mut mask = u64::MAX;
-            let mut max_count: usize;
-            let mut counts = vec![0isize; K + 1];
+            'bucket: while i < self.num_buckets {
+                let idx = perm[i];
+                let start = bucket_starts[idx];
+                let end = bucket_starts[idx + 1];
+                let len = end - start;
 
-            'seed: for seed in 0..256_usize {
-                if seed % 64 == 0 {
-                    mask = u64::MAX;
-                    bins.clear();
-                    bin_counts.clear();
-
-                    // Get the bins this set of keys maps to.
-                    for key in bucket {
-                        let bi = self.to_bin(*key, seed_offset + seed as u64);
-                        bins.push(bi);
-                    }
-
-                    // Group the bins into (bin, count) pairs.
-                    bins.sort_unstable();
-                    let mut last_bi = bins[0];
-                    let mut count = 1;
-                    max_count = 0;
-                    for &bi in &bins[1..] {
-                        if bi != last_bi {
-                            bin_counts.push((last_bi, count));
-                            max_count = max_count.max(count);
-                            last_bi = bi;
-                            count = 1;
-                        } else {
-                            count += 1;
-                        }
-                    }
-                    bin_counts.push((last_bi, count));
-
-                    if max_count > K {
-                        // Nothing works here
-                        mask = 0;
-                        continue 'seed;
-                    }
-
-                    for &(bi, _count) in &bin_counts {
-                        // update mask
-                        mask &=
-                            sux::traits::BitVecValueOps::<usize>::get_value(&non_full_bins, bi, 64)
-                                as u64;
-                    }
-                    // eprintln!("Bin sizes for seed {seed}: {}", bins.len());
-                }
-                if bump && seed == 0 {
-                    // this one is reserved for bumping, but we need it for the target bins.
-                    continue 'seed;
-                }
-                if (mask >> (seed % 64)) & 1 == 0 {
-                    continue 'seed;
-                }
-                if i == 0 && (!bump || seed != 1) && (seed % 64) != 0 {
-                    // For the first bucket, everything is still empty so no use in shifting.
-                    continue 'seed;
+                if len == 0 {
+                    i += 1;
+                    continue 'bucket;
                 }
 
-                // More refined check that considers within-bucket collisions.
-                counts.fill(0);
-                for &(bi, count) in &bin_counts {
-                    let bi = bi + (seed & SEED_MASK as usize) as usize;
-                    let s = unsafe { *bin_sizes.get_unchecked(bi) } as usize;
-                    if s + count > K {
-                        continue 'seed;
-                    }
-                    if !greedy {
-                        unsafe {
-                            *counts.get_unchecked_mut(s) += 1;
-                            *counts.get_unchecked_mut(s + count) -= 1;
-                        }
-                    }
-                }
+                let bucket = &keys[start..end];
 
-                let score = if !greedy && !consensus {
-                    for i in 1..=K {
-                        counts[i] += counts[i - 1];
-                    }
-                    debug_assert_eq!(counts[K], 0);
-                    f(&counts[..K])
+                // hash all keys with all seeds, and collect bin size statistics
+                let mut vals = vec![(usize::MAX, i64::MAX, usize::MAX)];
+
+                let seed_offset = if consensus {
+                    u64::from_be_bytes(seeds[i..i + 8].try_into().unwrap())
                 } else {
                     0
                 };
-                if consensus {
-                    vals.push((0, score, seed));
-                } else {
-                    if score < vals[0].1 {
-                        vals[0] = (0, score, seed);
+                assert!(
+                    seed_offset % 256 == 0,
+                    "{seed_offset:>0x} {:?}",
+                    seed_offset.to_be_bytes()
+                );
+
+                let mut mask = u64::MAX;
+                let mut max_count: usize;
+                let mut counts = vec![0isize; K + 1];
+
+                'seed: for seed in 0..256_usize {
+                    if seed % 64 == 0 {
+                        mask = u64::MAX;
+                        bins.clear();
+                        bin_counts.clear();
+
+                        // Get the bins this set of keys maps to.
+                        for key in bucket {
+                            let bi = self.to_bin(*key, seed_offset + seed as u64);
+                            bins.push(bi);
+                        }
+
+                        // Group the bins into (bin, count) pairs.
+                        bins.sort_unstable();
+                        let mut last_bi = bins[0];
+                        let mut count = 1;
+                        max_count = 0;
+                        for &bi in &bins[1..] {
+                            if bi != last_bi {
+                                bin_counts.push((last_bi, count));
+                                max_count = max_count.max(count);
+                                last_bi = bi;
+                                count = 1;
+                            } else {
+                                count += 1;
+                            }
+                        }
+                        bin_counts.push((last_bi, count));
+
+                        if max_count > K {
+                            // Nothing works here
+                            mask = 0;
+                            continue 'seed;
+                        }
+
+                        for &(bi, _count) in &bin_counts {
+                            // update mask
+                            mask &= sux::traits::BitVecValueOps::<usize>::get_value(
+                                &non_full_bins,
+                                bi,
+                                64,
+                            ) as u64;
+                        }
+                        // eprintln!("Bin sizes for seed {seed}: {}", bins.len());
+                    }
+                    if bump && seed == 0 {
+                        // this one is reserved for bumping, but we need it for the target bins.
+                        continue 'seed;
+                    }
+                    if (mask >> (seed % 64)) & 1 == 0 {
+                        continue 'seed;
+                    }
+                    if i == 0 && (!bump || seed != 1) && (seed % 64) != 0 {
+                        // For the first bucket, everything is still empty so no use in shifting.
+                        continue 'seed;
+                    }
+
+                    // More refined check that considers within-bucket collisions.
+                    counts.fill(0);
+                    for &(bi, count) in &bin_counts {
+                        let bi = bi + (seed & SEED_MASK as usize) as usize;
+                        let s = unsafe { *bin_sizes.get_unchecked(bi) } as usize;
+                        if s + count > K {
+                            continue 'seed;
+                        }
+                        if !greedy {
+                            unsafe {
+                                *counts.get_unchecked_mut(s) += 1;
+                                *counts.get_unchecked_mut(s + count) -= 1;
+                            }
+                        }
+                    }
+
+                    let score = if !greedy && !consensus {
+                        for i in 1..=K {
+                            counts[i] += counts[i - 1];
+                        }
+                        debug_assert_eq!(counts[K], 0);
+                        f(&counts[..K])
+                    } else {
+                        0
+                    };
+                    if consensus {
+                        vals.push((0, score, seed));
+                    } else {
+                        if score < vals[0].1 {
+                            vals[0] = (0, score, seed);
+                        }
+                    }
+                    if greedy && (consensus || tries[i] < vals.len() as u8) {
+                        break;
                     }
                 }
-                if greedy && (consensus || tries[i] < vals.len() as u8) {
-                    break;
+                if vals.len() > 1 {
+                    vals.sort_by(|x, y| x.partial_cmp(y).unwrap());
                 }
-            }
-            if vals.len() > 1 {
-                vals.sort_by(|x, y| x.partial_cmp(y).unwrap());
-            }
-            let best = vals[tries[i] as usize];
-            if consensus && best.0 > 0 {
-                backtracks += 1;
+                let best = vals[tries[i] as usize];
+                if consensus && best.0 > 0 {
+                    backtracks += 1;
 
-                if backtracks > n as u32 {
-                    // Too many backtracks, give up.
-                    return None;
-                }
-
-                // Backtrack 1 step.
-                tries[i] = 0;
-                if i > 0 {
-                    assert!(tries[i - 1] < 255);
-                    tries[i - 1] += 1;
-                    // Reduce the bucket size of previous seed of parent.
-
-                    let start = bucket_starts[idx - 1];
-                    let end = bucket_starts[idx];
-                    let bucket = &keys[start..end];
-
-                    let seed = u64::from_be_bytes(seeds[i - 1..i + 7].try_into().unwrap());
-
-                    for &key in bucket {
-                        let bi = self.to_bin(key, seed);
-                        assert!(bin_sizes[bi] > 0);
-                        bin_sizes[bi] -= 1;
-                        non_full_bins.set(bi, true);
+                    if backtracks > n as u32 {
+                        // Too many backtracks, give up.
+                        return None;
                     }
 
-                    seeds[i + 6] = 0;
-                    i -= 1;
-                }
-                if i == 0 {
-                    seeds[6] += 1;
-                }
-                continue;
-            }
+                    // Backtrack 1 step.
+                    tries[i] = 0;
+                    if i > 0 {
+                        assert!(tries[i - 1] < 255);
+                        tries[i - 1] += 1;
+                        // Reduce the bucket size of previous seed of parent.
 
-            if best.0 > 0 {
-                if !bump {
-                    // Unfixable collision found.
-                    return None;
+                        let start = bucket_starts[idx - 1];
+                        let end = bucket_starts[idx];
+                        let bucket = &keys[start..end];
+
+                        let seed = u64::from_be_bytes(seeds[i - 1..i + 7].try_into().unwrap());
+
+                        for &key in bucket {
+                            let bi = self.to_bin(key, seed);
+                            assert!(bin_sizes[bi] > 0);
+                            bin_sizes[bi] -= 1;
+                            non_full_bins.set(bi, true);
+                        }
+
+                        seeds[i + 6] = 0;
+                        i -= 1;
+                    }
+                    if i == 0 {
+                        seeds[6] += 1;
+                    }
+                    continue;
                 }
-                bumped += bucket.len();
+
+                if best.0 > 0 {
+                    // We never bump the largest bucket.
+                    if i == 0 {
+                        continue 'salt;
+                    }
+
+                    if !bump {
+                        // Unfixable collision found.
+                        return None;
+                    }
+                    bumped += bucket.len();
+                    i += 1;
+                    bumped_keys.extend_from_slice(bucket);
+                    // Bumped keys get seed 0
+                    seeds[idx + 7] = 0;
+                    continue;
+                }
+
+                let seed = best.2;
+                if bump {
+                    assert!(seed > 0);
+                }
+                assert!(seed < 256);
+                seeds[idx + 7] = seed as u8;
+
+                for &key in bucket {
+                    let bi = self.to_bin(key, seed_offset + seed as u64);
+                    assert!( bin_sizes[bi] < K as u8, "collision at {i} size {len} seed {seed} offset {seed_offset:>0x} best {best:?} bin id {bi} bin size {}", bin_sizes[bi]);
+                    bin_sizes[bi] += 1;
+                    if bin_sizes[bi] == K as u8 {
+                        non_full_bins.set(bi, false);
+                    }
+                }
+
                 i += 1;
-                bumped_keys.extend_from_slice(bucket);
-                // Bumped keys get seed 0
-                seeds[idx + 7] = 0;
-                continue;
             }
 
-            let seed = best.2;
-            if bump {
-                assert!(seed > 0);
-            }
-            assert!(seed < 256);
-            seeds[idx + 7] = seed as u8;
+            let _duration = start.elapsed();
+            // eprintln!(
+            //     "alpha: {:>4.2}, bits/key: {:<6}, mode: {:>27} BTs {backtracks:>7} Bumped {bumped:>7} ({:.4}%) {:>6?}ms",
+            //     self.alpha,
+            //     self.bits_per_key,
+            //     format!("{MODE:?}"),
+            //     bumped as f32 / n as f32 * 100.0,
+            //     duration.as_millis()
+            // );
 
-            for &key in bucket {
-                let bi = self.to_bin(key, seed_offset + seed as u64);
-                assert!( bin_sizes[bi] < K as u8, "collision at {i} size {len} seed {seed} offset {seed_offset:>0x} best {best:?} bin id {bi} bin size {}", bin_sizes[bi]);
-                bin_sizes[bi] += 1;
-                if bin_sizes[bi] == K as u8 {
-                    non_full_bins.set(bi, false);
-                }
-            }
-
-            i += 1;
-        }
-
-        let _duration = start.elapsed();
-        // eprintln!(
-        //     "alpha: {:>4.2}, bits/key: {:<6}, mode: {:>27} BTs {backtracks:>7} Bumped {bumped:>7} ({:.4}%) {:>6?}ms",
-        //     self.alpha,
-        //     self.bits_per_key,
-        //     format!("{MODE:?}"),
-        //     bumped as f32 / n as f32 * 100.0,
-        //     duration.as_millis()
-        // );
-
-        self.seeds = seeds;
-        if bumped > 0 {
-            log::warn!(
-                "Bumping {bumped} keys = {:>.1}%",
-                bumped as f32 / n as f32 * 100.0
-            );
-            if bumped > n / 10 {
-                eprintln!(
+            self.seeds = seeds;
+            if bumped > 0 {
+                log::warn!(
                     "Bumping {bumped} keys = {:>.1}%",
                     bumped as f32 / n as f32 * 100.0
                 );
+                if bumped > n / 10 {
+                    eprintln!(
+                        "Bumping {bumped} keys = {:>.1}%",
+                        bumped as f32 / n as f32 * 100.0
+                    );
+                }
+                assert!(bumped < n / 2, "Too many bumped keys: {bumped} out of {n}.");
+                self.bumped = Some(Box::new(Self::new::<T>(
+                    // use a lazy load factor for fallback
+                    0.5,
+                    // double the bits/key for bumped keys
+                    2.0 * self.bits_per_key,
+                    &bumped_keys,
+                )?));
             }
-            assert!(bumped < n / 2, "Too many bumped keys: {bumped} out of {n}.");
-            self.bumped = Some(Box::new(Self::new::<T>(
-                // use a lazy load factor for fallback
-                0.5,
-                // double the bits/key for bumped keys
-                2.0 * self.bits_per_key,
-                &bumped_keys,
-            )?));
+            return Some(());
         }
-        Some(())
     }
 
     pub fn num_bins(&self) -> usize {
