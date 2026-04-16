@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import re
+import sys
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -27,21 +28,10 @@ LINEWIDTHS = {
     "SortBump": 2.0,
     "SortBumpGreedy": 1.0,
 }
-LEFT_X_TICKS = [
-    # 0.06,
-    # 0.1,
-    # 0.2,
-    # 0.5,
-]
-RIGHT_X_TICKS = [
-    # 0.02,
-    # 0.04,
-    # 0.1,
-    # 0.3,
-]
-X_TICKS = [LEFT_X_TICKS, RIGHT_X_TICKS]
 BUMP_TICKS = [0, 1, 2, 5, 10]
 BUMP_TICK_LABELS = ["0%", "1%", "2%", "5%", "10%"]
+
+HIGHLIGHT = 1.5
 
 
 def parse_algorithm(alg: str) -> tuple[str, int]:
@@ -124,11 +114,8 @@ def plot_dataset(data_path: Path, output_path: Path) -> None:
         x_min = min(subset["actual_bits_per_key"].min(), lb_subset["lower_bound"].min())
         x_max = subset["actual_bits_per_key"].max()
         x_limits = (x_min / 1.1, x_max * 1.1)
-        row_ticks = [
-            tick for tick in X_TICKS[col] if x_limits[0] <= tick <= x_limits[1]
-        ]
         lb_ticks = lb_subset["lower_bound"].tolist()
-        xticks = sorted(set(row_ticks + lb_ticks))
+        xticks = sorted(set(lb_ticks))
         for row, (metric, ylabel) in enumerate(METRICS):
             ax = axes[row][col]
             for (mode, alpha), group in subset.groupby(["mode", "alpha"], sort=True):
@@ -142,13 +129,14 @@ def plot_dataset(data_path: Path, output_path: Path) -> None:
                     color=alpha_colors[alpha],
                 )
                 point_colors = [
-                    "red" if f == 1.6 else alpha_colors[alpha] for f in group["factor"]
+                    "red" if f == HIGHLIGHT else alpha_colors[alpha]
+                    for f in group["factor"]
                 ]
                 point_sizes = [
                     (
                         16
                         if metric == "bumped_frac" and value == 0
-                        else 14 if factor == 1.6 else 12
+                        else 14 if factor == HIGHLIGHT else 12
                     )
                     for factor, value in zip(group["factor"], group[metric])
                 ]
@@ -163,7 +151,7 @@ def plot_dataset(data_path: Path, output_path: Path) -> None:
                 if zero_bump_mask:
                     zero_group = group[group[metric] == 0]
                     zero_colors = [
-                        "red" if f == 1.6 else alpha_colors[alpha]
+                        "red" if f == HIGHLIGHT else alpha_colors[alpha]
                         for f in zero_group["factor"]
                     ]
                     ax.scatter(
@@ -244,7 +232,7 @@ def plot_dataset(data_path: Path, output_path: Path) -> None:
                     color="w",
                     markerfacecolor="red",
                     markersize=5,
-                    label="factor$=1.6$",
+                    label=f"factor$={HIGHLIGHT}$",
                     linestyle="none",
                 )
                 alpha_handles = [
@@ -287,8 +275,20 @@ def plot_dataset(data_path: Path, output_path: Path) -> None:
     plt.close(fig)
 
 
+def default_output_path(data_path: Path) -> Path:
+    if data_path.name.startswith("data"):
+        return data_path.with_name(
+            data_path.name.replace("data", "plot", 1)
+        ).with_suffix(".png")
+    return data_path.with_suffix(".png")
+
+
 def main() -> None:
-    # base_path = Path(__file__).parent
+    if len(sys.argv) > 1:
+        data_path = Path(sys.argv[1])
+        plot_dataset(data_path, default_output_path(data_path))
+        return
+
     base_path = Path(".")
     for data_name, output_name in DATASETS:
         plot_dataset(base_path / data_name, base_path / output_name)
