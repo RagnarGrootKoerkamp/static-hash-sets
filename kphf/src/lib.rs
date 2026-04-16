@@ -1,7 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(widening_mul, adt_const_params, generic_const_exprs)]
 
-use std::fmt::Debug;
+use std::{fmt::Debug, hint::cold_path};
 use sux::{traits::BitVecOpsMut, utils::prefetch_index};
 
 pub trait KphfT {
@@ -510,6 +510,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             Mode::LinearBump | Mode::SortBump | Mode::LinearBumpGreedy | Mode::SortBumpGreedy
         ) && seed == 255
         {
+            cold_path();
             self.num_bins + self.bumped.as_ref().unwrap().get(key)
         } else {
             self.to_bin(key, seed)
