@@ -187,7 +187,7 @@ impl Bencher {
 
     pub fn bench(&self, constructor: fn(f32, &[T]) -> Box<dyn HashSet>, alpha: f32) {
         for repeat in 0..REPEATS {
-            let (build, h) = time(|| constructor(alpha, &self.keys));
+            let (build, ref h) = time(|| constructor(alpha, &self.keys));
             let name = h.name();
             let build = build / self.n as f32;
             let bumped_frac = h.bumped_frac();
@@ -201,23 +201,28 @@ impl Bencher {
                     let mut query = [0f32; 5];
                     for (qi, &_p) in PERCENTILES.iter().enumerate() {
                         let start = std::time::Instant::now();
-                        std::thread::scope(|scope| {
-                            for t in 0..threads {
-                                let qs = &self.queries[t][repeat][qi];
-                                let h = &h;
-                                scope.spawn(move || match metric {
-                                    "loop" => {
-                                        let c = h.count_loop(&qs);
-                                        black_box(c);
-                                    }
-                                    "prefetch" => {
-                                        let c = h.count_prefetch(&qs);
-                                        black_box(c);
-                                    }
-                                    _ => unreachable!(),
-                                });
+                        let worker = |qs: &[T]| match metric {
+                            "loop" => {
+                                let c = h.count_loop(&qs);
+                                black_box(c);
                             }
-                        });
+                            "prefetch" => {
+                                let c = h.count_prefetch(&qs);
+                                black_box(c);
+                            }
+                            _ => unreachable!(),
+                        };
+                        if threads == 1 {
+                            let qs = &self.queries[0][repeat][qi];
+                            worker(qs);
+                        } else {
+                            std::thread::scope(|scope| {
+                                for t in 0..threads {
+                                    let qs = &self.queries[t][repeat][qi];
+                                    scope.spawn(move || worker(qs));
+                                }
+                            });
+                        }
                         query[qi] = start.elapsed().as_nanos() as f32 / (threads * QUERIES) as f32;
                     }
                     let result = Result {
