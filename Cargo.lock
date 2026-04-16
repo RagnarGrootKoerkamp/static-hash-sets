@@ -1494,6 +1494,7 @@ checksum = "1c4e48411f4db8ccca0470bfb67e3bb821af4227d455aa147917d8d109be0d13"
 name = "static_hash_set"
 version = "0.1.0"
 dependencies = [
+ "csv",
  "cuckoofilter",
  "fastbloom",
  "fxhash",
@@ -1504,6 +1505,7 @@ dependencies = [
  "prefetch-index",
  "rand 0.9.2",
  "rustc-hash",
+ "serde",
  "sux",
  "wide",
 ]

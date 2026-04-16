@@ -54,6 +54,7 @@ impl<const MODE: Mode> CuckooSet<MODE> {
         this
     }
     fn with_capacity(slot_ratio: f32, n: usize) -> Self {
+        assert!(slot_ratio >= 1.0);
         let capacity = (n as f32 * slot_ratio).ceil() as usize;
         let num_bins = capacity.div_ceil(BIN_SIZE);
         let table = vec![Bin([0 as T; BIN_SIZE]); num_bins].into_boxed_slice();

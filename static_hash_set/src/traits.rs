@@ -5,22 +5,21 @@ use super::T;
 pub trait HashSet: Send + Sync {
     fn name(&self) -> &'static str;
     fn new(&self, keys: &[T]) -> Box<dyn HashSet>;
+    /// Bytes of the entire data structure.
     fn allocation_size(&self) -> usize;
+    /// Bytes of the KPHF only.
+    fn kphf_size(&self) -> usize {
+        0
+    }
+    /// Fraction of keys bumped in the first KPHF level.
+    fn bumped_frac(&self) -> f32 {
+        0.0
+    }
     fn has_prefetch(&self) -> bool {
         false
     }
     fn prefetch(&self, _key: T) {}
     fn contains(&self, key: T) -> bool;
-    fn count_latency(&self, keys: &[T]) -> usize {
-        let mut c = 0;
-        let mut x = 0;
-        for &key in keys {
-            c += self.contains(key ^ x) as usize;
-            x = std::hint::black_box(c as u64 * 0);
-        }
-        std::hint::black_box(c);
-        c
-    }
     fn count_loop(&self, keys: &[T]) -> usize {
         let mut c = 0;
         for &key in keys {
@@ -41,15 +40,13 @@ pub trait HashSet: Send + Sync {
     }
 }
 
+// FIXME: Prefetch
 impl HashSet for hashbrown::HashSet<T, FxBuildHasher> {
     fn name(&self) -> &'static str {
         "FxHashSet"
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let mut h = hashbrown::HashSet::with_capacity_and_hasher(keys.len(), Default::default());
-        for &k in keys {
-            h.insert(k);
-        }
+        let h = hashbrown::HashSet::from_iter(keys.iter().cloned());
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {

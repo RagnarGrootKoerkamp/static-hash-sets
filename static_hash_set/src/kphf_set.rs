@@ -53,10 +53,6 @@ impl<const MODE: kphf::Mode, const K: usize> KphfSet<MODE, K> {
         this
     }
 
-    pub fn allocation_size(&self) -> usize {
-        std::mem::size_of_val(&*self.table) + self.kphf.bits_used() / 8
-    }
-
     #[inline(always)]
     pub fn len(&self) -> usize {
         self.len + self.has_zero as usize
@@ -138,7 +134,13 @@ impl<const MODE: kphf::Mode, const K: usize> HashSet for KphfSet<MODE, K> {
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {
-        KphfSet::allocation_size(self)
+        std::mem::size_of_val(&*self.table) + self.kphf.bits_used() / 8
+    }
+    fn kphf_size(&self) -> usize {
+        self.kphf.bits_used() / 8
+    }
+    fn bumped_frac(&self) -> f32 {
+        self.kphf.num_bumped() as f32 / self.len() as f32
     }
     fn has_prefetch(&self) -> bool {
         true

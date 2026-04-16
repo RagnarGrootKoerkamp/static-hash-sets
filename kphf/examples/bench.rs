@@ -97,9 +97,9 @@ where
                         loop_ns,
                         throughput_ns,
                     };
-                    CSV_WRITER.with(|w| {
-                        w.borrow_mut().serialize(&result).unwrap();
-                        w.borrow_mut().flush().unwrap();
+                    CSV_WRITER.with_borrow_mut(|w| {
+                        w.serialize(&result).unwrap();
+                        w.flush().unwrap();
                     });
                 }
             }
