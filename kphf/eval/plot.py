@@ -9,8 +9,7 @@ from matplotlib.lines import Line2D
 import pandas as pd
 
 DATASETS = [
-    ("data.csv", "plot.png"),
-    ("data-1e8.csv", "plot-1e8.png"),
+    ("data-laptop.csv", "plot-laptop"),
 ]
 ALG_PATTERN = re.compile(r"Mode::(?P<mode>\w+),\s*(?P<k>\d+)>")
 METRICS = [
@@ -60,8 +59,8 @@ def load_data(data_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
         "throughput_ns",
     ]
     df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric)
-    df["loop_ns"] = df["loop_ns"] / df["n"]
-    df["throughput_ns"] = df["build_ns"] / df["n"]
+    # df["loop_ns"] = df["loop_ns"] / df["n"]
+    # df["throughput_ns"] = df["build_ns"] / df["n"]
 
     lower_bounds = (
         df[df["factor"] == 1]
@@ -88,8 +87,14 @@ def load_data(data_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     return median_df, lower_bounds
 
 
-def plot_dataset(data_path: Path, output_path: Path) -> None:
+def plot_dataset_ns(data_path: Path, output_name) -> None:
     df, lower_bounds = load_data(data_path)
+
+    for n, data in df.groupby("n"):
+        plot_dataset(data, lower_bounds, Path(".") / (output_name + f"-n{n:,}.png"))
+
+
+def plot_dataset(df, lower_bounds, output_path: Path) -> None:
     k_values = sorted(df["k"].unique())
     alpha_values = sorted(df["alpha"].unique())
     alpha_colors = {
@@ -277,21 +282,18 @@ def plot_dataset(data_path: Path, output_path: Path) -> None:
 
 def default_output_path(data_path: Path) -> Path:
     if data_path.name.startswith("data"):
-        return data_path.with_name(
-            data_path.name.replace("data", "plot", 1)
-        ).with_suffix(".png")
-    return data_path.with_suffix(".png")
+        return data_path.with_name(data_path.name.replace("data", "plot", 1)).name
+    return data_path.name
 
 
 def main() -> None:
     if len(sys.argv) > 1:
-        data_path = Path(sys.argv[1])
-        plot_dataset(data_path, default_output_path(data_path))
+        data_path = Path(sys.argv[1] + ".csv")
+        plot_dataset_ns(data_path, sys.argv[1].replace("data", "plot"))
         return
 
-    base_path = Path(".")
     for data_name, output_name in DATASETS:
-        plot_dataset(base_path / data_name, base_path / output_name)
+        plot_dataset_ns(Path(".") / data_name, output_name)
 
 
 main()
