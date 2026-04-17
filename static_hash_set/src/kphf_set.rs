@@ -53,6 +53,23 @@ impl<const MODE: kphf::Mode, const K: usize> KphfSet<MODE, K> {
         this
     }
 
+    pub fn try_new(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
+        let kphf = kphf::KptrHash::<MODE, K>::new::<T>(alpha, bits_per_key, keys)?;
+        let table = vec![Bin([0 as T; BIN_SIZE]); kphf.num_bins()].into_boxed_slice();
+        let mut this = Self {
+            alpha,
+            bits_per_key,
+            table,
+            len: 0,
+            has_zero: false,
+            kphf,
+        };
+        for &k in keys {
+            this.insert(k);
+        }
+        Some(this)
+    }
+
     #[inline(always)]
     pub fn len(&self) -> usize {
         self.len + self.has_zero as usize

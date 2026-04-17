@@ -47,58 +47,64 @@ fn main() {
 
     let hashers = vec![
         (
-            |_alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-                Box::new(hashbrown::HashSet::<T, FxHasher>::from_iter(
+            |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                Some(Box::new(hashbrown::HashSet::<T, FxHasher>::from_iter(
                     keys.iter().cloned(),
-                ))
-            } as fn(f32, &[T]) -> Box<dyn HashSet>,
+                )))
+            } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![0.5],
         ),
         (
-            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-                Box::new(U64HashSet::new(1. / alpha, keys))
-            },
+            |alpha: f32, keys: &[T]| Some(Box::new(U64HashSet::new(1. / alpha, keys))),
             vec![0.7, 0.8, 0.9, 0.95],
         ),
         (
-            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-                Box::new(CuckooSet::<{ Mode::Eager }>::new(1. / alpha, keys))
-            } as fn(f32, &[T]) -> Box<dyn HashSet>,
-            vec![0.7, 0.8, 0.9, 0.99],
-        ),
-        (
-            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-                Box::new(CuckooSet::<{ Mode::Lazy }>::new(1. / alpha, keys))
-            } as fn(f32, &[T]) -> Box<dyn HashSet>,
-            vec![0.7, 0.8, 0.9, 0.99],
-        ),
-        (
-            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-                Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
-                    alpha,
-                    1.5 * space_lower_bound(BIN_SIZE, alpha),
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(CuckooSet::<{ Mode::Eager }>::new(
+                    1. / alpha,
                     keys,
-                ))
-            } as fn(f32, &[T]) -> Box<dyn HashSet>,
+                )))
+            },
             vec![0.7, 0.8, 0.9, 0.99],
         ),
         (
-            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-                Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
-                    alpha,
-                    1.6 * space_lower_bound(BIN_SIZE, alpha),
-                    keys,
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(CuckooSet::<{ Mode::Lazy }>::new(1. / alpha, keys)))
+            },
+            vec![0.7, 0.8, 0.9, 0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(
+                    KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
+                        alpha,
+                        1.5 * space_lower_bound(BIN_SIZE, alpha),
+                        keys,
+                    ),
                 ))
             },
             vec![0.7, 0.8, 0.9, 0.99],
         ),
         (
-            |alpha: f32, keys: &[T]| -> Box<dyn HashSet> {
-                Box::new(KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::new(
-                    alpha,
-                    1.6 * space_lower_bound(BIN_SIZE, alpha),
-                    keys,
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(
+                    KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
+                        alpha,
+                        1.6 * space_lower_bound(BIN_SIZE, alpha),
+                        keys,
+                    ),
                 ))
+            },
+            vec![0.7, 0.8, 0.9, 0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                let h = KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::try_new(
+                    alpha,
+                    1.7 * space_lower_bound(BIN_SIZE, alpha),
+                    keys,
+                )?;
+                Some(Box::new(h))
             },
             vec![0.7, 0.8, 0.9],
         ),
@@ -188,8 +194,15 @@ impl Bencher {
         Self { n, keys, queries }
     }
 
-    pub fn bench(&self, constructor: fn(f32, &[T]) -> Box<dyn HashSet>, alpha: f32, repeat: usize) {
-        let (build, ref h) = time(|| constructor(alpha, &self.keys));
+    pub fn bench(
+        &self,
+        constructor: fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+        alpha: f32,
+        repeat: usize,
+    ) {
+        let (build, Some(ref h)) = time(|| constructor(alpha, &self.keys)) else {
+            return;
+        };
         let name = h.name();
         let build = build / self.n as f32;
         let bumped_frac = h.bumped_frac();
