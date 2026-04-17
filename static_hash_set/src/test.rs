@@ -6,7 +6,6 @@ fn test() {
         Box::new(hashbrown::HashSet::<T, FxHasher>::default()) as Box<dyn HashSet>,
         Box::new(U64HashSet::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::Lazy }>::new(1.1, &[])),
-        Box::new(CuckooSet::<{ Mode::PrefetchOneEager }>::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::Eager }>::new(1.1, &[])),
         Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
             0.9,

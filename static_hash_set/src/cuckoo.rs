@@ -202,8 +202,8 @@ impl<const MODE: Mode> CuckooSet<MODE> {
 impl<const MODE: Mode> HashSet for CuckooSet<MODE> {
     fn name(&self) -> &'static str {
         match MODE {
-            Mode::Eager => "CuckooSet<PrefetchBoth>",
-            Mode::Lazy => "CuckooSet<PrefetchOneLazy>",
+            Mode::Eager => "CuckooSet<Eager>",
+            Mode::Lazy => "CuckooSet<Lazy>",
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
