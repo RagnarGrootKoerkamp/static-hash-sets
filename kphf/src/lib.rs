@@ -177,7 +177,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         let mut attempt = 0;
         'salt: loop {
             attempt += 1;
-            if attempt == 4 {
+            if attempt == 10 {
                 return None;
             }
             self.salt = rand::random();
