@@ -124,7 +124,7 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
         for row, (metric, ylabel) in enumerate(METRICS):
             ax = axes[row][col]
             for (mode, alpha), group in subset.groupby(["mode", "alpha"], sort=True):
-                group = group.sort_values("target_bits_per_key")
+                # group = group.sort_values("target_bits_per_key")
                 ax.plot(
                     group["actual_bits_per_key"],
                     group[metric],
@@ -138,14 +138,9 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                     for f in group["factor"]
                 ]
                 point_sizes = [
-                    (
-                        16
-                        if metric == "bumped_frac" and value == 0
-                        else 14 if factor == HIGHLIGHT else 12
-                    )
+                    (16 if factor == HIGHLIGHT else 14)
                     for factor, value in zip(group["factor"], group[metric])
                 ]
-                zero_bump_mask = metric == "bumped_frac" and (group[metric] == 0).any()
                 ax.scatter(
                     group["actual_bits_per_key"],
                     group[metric],
@@ -153,21 +148,21 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                     color=point_colors,
                     zorder=3,
                 )
-                if zero_bump_mask:
-                    zero_group = group[group[metric] == 0]
-                    zero_colors = [
-                        "red" if f == HIGHLIGHT else alpha_colors[alpha]
-                        for f in zero_group["factor"]
-                    ]
-                    ax.scatter(
-                        zero_group["actual_bits_per_key"],
-                        zero_group[metric],
-                        s=16,
-                        facecolors="white",
-                        edgecolors=zero_colors,
-                        linewidths=1.0,
-                        zorder=4,
-                    )
+
+                zero_group = group[group["bumped_frac"] == 0]
+                zero_colors = [
+                    "red" if f == HIGHLIGHT else alpha_colors[alpha]
+                    for f in zero_group["factor"]
+                ]
+                ax.scatter(
+                    zero_group["actual_bits_per_key"],
+                    zero_group[metric],
+                    s=18,
+                    facecolors="white",
+                    edgecolors=zero_colors,
+                    linewidths=1.5,
+                    zorder=4,
+                )
 
             ax.set_title(f"k={k}" if row == 0 else "")
             ax.set_xlabel("bits / key" if row == len(METRICS) - 1 else "")
@@ -226,8 +221,8 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                     marker="o",
                     color="w",
                     markerfacecolor="black",
-                    markersize=5,
-                    label="factor$= 1.0/1.2/1.4/1.8/2.0/2.2/2.4$",
+                    markersize=6,
+                    label="factor$= 1.0/1.25/1.75/2.0/2.25/2.5$",
                     linestyle="none",
                 )
                 factor_handle = Line2D(
@@ -236,7 +231,7 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                     marker="o",
                     color="w",
                     markerfacecolor="red",
-                    markersize=5,
+                    markersize=6,
                     label=f"factor$={HIGHLIGHT}$",
                     linestyle="none",
                 )
@@ -250,29 +245,23 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                     )
                     for a in alpha_values
                 ]
-                ax.legend(
-                    handles=mode_handles
-                    + [factor_range_handle, factor_handle]
-                    + alpha_handles,
-                    ncol=2,
-                    loc="upper left",
-                )
-            if row == 1 and col == 0:
                 bumped_handle = Line2D(
                     [0],
                     [0],
                     marker="o",
                     color="black",
                     markerfacecolor="white",
-                    markersize=7,
+                    markersize=5,
                     label="None bumped",
                     linestyle="none",
-                    # s=16,
                     markeredgewidth=1.5,
                 )
                 ax.legend(
-                    handles=[bumped_handle],
-                    loc="upper right",
+                    handles=mode_handles
+                    + [factor_range_handle, factor_handle, bumped_handle]
+                    + alpha_handles,
+                    ncol=2,
+                    loc="upper left",
                 )
 
     fig.tight_layout()
