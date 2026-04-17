@@ -13,9 +13,9 @@ DATASETS = [
 ]
 ALG_PATTERN = re.compile(r"Mode::(?P<mode>\w+),\s*(?P<k>\d+)>")
 METRICS = [
-    ("build_ns", "Build time (ns/key)"),
     ("bumped_frac", "Bumped (%)"),
     ("actual_alpha", "Actual $\\alpha$"),
+    ("build_ns", "Build time (ns/key)"),
     ("loop_ns", "Query time (ns/query)"),
     # ("throughput_ns", "Throughput (ns)"),
 ]
