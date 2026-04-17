@@ -1,5 +1,6 @@
 bench:
     cargo run -r | tee eval/data.csv
 plot:
-    cd eval && python plot.py
+    cd eval && python plot.py floyd diffie laptop
+
 

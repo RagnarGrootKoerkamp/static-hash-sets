@@ -277,6 +277,8 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    fig.savefig(output_path.with_suffix(".pdf"), bbox_inches="tight")
+    fig.savefig(output_path.with_suffix(".svg"), bbox_inches="tight")
     plt.close(fig)
 
 
