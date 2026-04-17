@@ -174,7 +174,12 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         // We loop here until we find a salt for which bucket 0 succeeds.
         // Specifically, there are only 4 really distinct seeds for bucket 0 (0/64/128/192), so we may have to retry.
+        let mut attempt = 0;
         'salt: loop {
+            attempt += 1;
+            if attempt == 4 {
+                return None;
+            }
             self.salt = rand::random();
 
             // 1. count keys per bucket
@@ -430,7 +435,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
                     if !bump {
                         // Unfixable collision found.
-                        return None;
+                        continue 'salt;
                     }
                     bumped += bucket.len();
                     i += 1;
