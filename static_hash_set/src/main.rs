@@ -87,18 +87,6 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| {
-                Some(Box::new(
-                    KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
-                        alpha,
-                        1.6 * space_lower_bound(BIN_SIZE, alpha),
-                        keys,
-                    ),
-                ))
-            },
-            vec![0.7, 0.8, 0.9, 0.99],
-        ),
-        (
-            |alpha: f32, keys: &[T]| {
                 let h = KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::try_new(
                     alpha,
                     1.7 * space_lower_bound(BIN_SIZE, alpha),
