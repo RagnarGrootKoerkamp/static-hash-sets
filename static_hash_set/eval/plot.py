@@ -18,10 +18,20 @@ data = data[data["metric"] == "prefetch"]
 data["label"] = data.apply(
     lambda row: row["h"] + " (" + str(row["alpha"]) + "x)", axis=1
 )
+print(data.columns)
 
 queries = ["q01", "q50", "q99"]
-group_columns = ["h", "pf", "threads", "metric", "n", "alpha", "label"]
-data = data.groupby(group_columns, as_index=False)[["build", *queries]].median()
+group_columns = [
+    "h",
+    "pf",
+    "threads",
+    "metric",
+    "n",
+    "alpha",
+    "label",
+    "kphf_target_bits_per_key",
+]
+data = data.groupby(group_columns, as_index=False)[["build", *queries]].min()
 
 labels = data["label"].unique()
 print(labels)
@@ -29,10 +39,8 @@ palette = sns.color_palette(n_colors=len(labels))
 label_color = {
     "FxHashSet": "red",
     "U64HashSet": "green",
-    "U64HashSet": "green",
-    "CuckooSet<PrefetchOneLazy>": "orange",
-    "CuckooSet<PrefetchOneEager>": "white",
-    "CuckooSet<PrefetchBoth>": "white",
+    "CuckooSet<Lazy>": "orange",
+    "CuckooSet<Eager>": "pink",
     "KphfSet<Sort>": "lime",
     "KphfSet<SortBump>": "blue",
     "KphfSet<SortBumpGreedy>": "cyan",
@@ -67,11 +75,11 @@ fig, axes = plt.subplots(
 
 for ri, threads in enumerate(thread_counts):
     thread_data = data[data["threads"] == threads]
-    groups = thread_data.groupby(["h", "alpha"])
+    groups = thread_data.groupby(["h", "alpha", "kphf_target_bits_per_key"])
     for ci, (q, title) in enumerate(zip(queries, titles)):
         ax = axes[ri][ci]
 
-        for (h, alpha), subset in groups:
+        for (h, alpha, bpk), subset in groups:
             sns.lineplot(
                 data=subset,
                 x="n",
