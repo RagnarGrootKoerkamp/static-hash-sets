@@ -41,7 +41,7 @@ struct Result {
 }
 
 const REPEATS: usize = 1;
-const NS: [usize; 2] = [10_000_000, 100_000_000];
+const NS: [usize; 1] = [100_000_000];
 const ALPHAS: [f32; 4] = [0.7, 0.8, 0.9, 0.99];
 const FACTORS: [f32; 7] = [2.5, 2.25, 2.0, 1.75, 1.5, 1.25, 1.0];
 const QUERY: bool = true;
