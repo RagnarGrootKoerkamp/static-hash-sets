@@ -35,10 +35,6 @@ impl<PHF: Phf> PhfSet<PHF> {
         //     assert!(seen.insert(k), "Duplicate key {k:?} in input.");
         // }
 
-        eprintln!(
-            "Load factor: {:.4}",
-            keys.len() as f32 / phf.num_bins() as f32
-        );
         let table = vec![0 as T; phf.num_bins()].into_boxed_slice();
 
         let mut this = Self {
