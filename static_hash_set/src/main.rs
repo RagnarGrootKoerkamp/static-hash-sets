@@ -47,10 +47,10 @@ const MODES: [&str; 2] = ["loop", "prefetch"];
 
 fn main() {
     let ns = (0..)
-        .map(|i| (1_000_000. * 2.5f32.powi(i)) as usize)
+        .map(|i| (1_000_000. * 1.5f32.powi(i)) as usize)
         .take_while(|x| *x <= 1_000_000_000)
         .collect::<Vec<_>>();
-    let ns = [10_000_000];
+    // let ns = [10_000_000];
 
     let hashers = vec![
         // k-PHF-set
@@ -106,7 +106,8 @@ fn main() {
         // U64HashSet
         (
             |alpha: f32, keys: &[T]| Some(Box::new(U64HashSet::new(1. / alpha, keys))),
-            vec![0.7, 0.8, 0.9, 0.95],
+            // vec![0.7, 0.8, 0.9, 0.95],
+            vec![0.7],
         ),
         // Eager Cuckoo
         (
@@ -116,14 +117,14 @@ fn main() {
                     keys,
                 )))
             },
-            vec![0.7, 0.8, 0.9, 0.99],
+            vec![0.99],
         ),
         // Lazy Cuckoo
         (
             |alpha: f32, keys: &[T]| {
                 Some(Box::new(CuckooSet::<{ Mode::Lazy }>::new(1. / alpha, keys)))
             },
-            vec![0.7, 0.8, 0.9, 0.99],
+            vec![0.7],
         ),
         // FPH
         (
