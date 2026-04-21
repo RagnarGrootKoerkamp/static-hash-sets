@@ -124,6 +124,9 @@ impl<PHF: Phf + 'static + Sync + Send> HashSet for PhfSet<PHF> {
     fn allocation_size(&self) -> usize {
         std::mem::size_of_val(&*self.table) + self.phf.bits_used() / 8
     }
+    fn load_factor(&self) -> f32 {
+        self.len() as f32 / self.phf.num_bins() as f32
+    }
     fn kphf_target_bits_per_key(&self) -> f32 {
         self.phf.bits_used() as f32 / self.len() as f32 / 8.0
     }

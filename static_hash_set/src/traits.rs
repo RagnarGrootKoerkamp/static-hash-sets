@@ -5,6 +5,7 @@ pub trait HashSet: Send + Sync {
     fn new(&self, keys: &[T]) -> Box<dyn HashSet>;
     /// Bytes of the entire data structure.
     fn allocation_size(&self) -> usize;
+    fn load_factor(&self) -> f32;
     fn kphf_target_bits_per_key(&self) -> f32 {
         0.0
     }
@@ -53,6 +54,9 @@ impl HashSet for hashbrown::HashSet<T, gxhash::GxBuildHasher> {
     fn allocation_size(&self) -> usize {
         self.allocation_size()
     }
+    fn load_factor(&self) -> f32 {
+        self.len() as f32 / self.capacity() as f32
+    }
     #[inline(always)]
     fn contains(&self, key: T) -> bool {
         self.contains(&key)
@@ -74,6 +78,9 @@ impl HashSet for fastbloom::BloomFilter<gxhash::GxBuildHasher> {
     fn allocation_size(&self) -> usize {
         0
     }
+    fn load_factor(&self) -> f32 {
+        0.0
+    }
     #[inline(always)]
     fn contains(&self, key: T) -> bool {
         self.contains(&key)
@@ -93,6 +100,9 @@ impl HashSet for cuckoofilter::CuckooFilter<gxhash::GxHasher> {
     }
     fn allocation_size(&self) -> usize {
         0
+    }
+    fn load_factor(&self) -> f32 {
+        0.0
     }
     #[inline(always)]
     fn contains(&self, key: T) -> bool {

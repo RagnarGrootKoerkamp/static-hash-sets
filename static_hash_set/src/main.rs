@@ -178,6 +178,7 @@ pub struct Result {
     alpha: f32,
     repeat: usize,
     build: f32,
+    load_factor: f32,
     bumped_frac: f32,
     overhead: f32,
     kphf_target_bits_per_key: f32,
@@ -246,6 +247,7 @@ impl Bencher {
         let kphf_target_bits_per_key = h.kphf_target_bits_per_key();
         let kphf_bits_per_key = h.kphf_size() as f32 * 8.0 / self.n as f32;
         let overhead = bits_per_key / T::BITS as f32;
+        let load_factor = h.load_factor();
         let pf = h.has_prefetch();
         for &threads in &THREADS {
             for metric in MODES {
@@ -286,6 +288,7 @@ impl Bencher {
                         threads,
                         metric,
                         build,
+                        load_factor,
                         bumped_frac,
                         overhead,
                         kphf_target_bits_per_key,

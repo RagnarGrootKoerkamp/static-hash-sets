@@ -190,6 +190,9 @@ impl HashSet for U64HashSet {
     fn allocation_size(&self) -> usize {
         self.allocation_size()
     }
+    fn load_factor(&self) -> f32 {
+        self.len() as f32 / (self.num_bins * BIN_SIZE) as f32
+    }
     fn has_prefetch(&self) -> bool {
         true
     }
