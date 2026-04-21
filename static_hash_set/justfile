@@ -3,4 +3,8 @@ bench:
 plot:
     cd eval && python plot.py floyd diffie laptop
 
+bench_diffie:
+    sbatch --partition=diffie --wrap='cargo run -r -F diffie | tee eval/data-diffie.csv'
+bench_floyd:
+    sbatch --partition=floyd --wrap='cargo run -r -F floyd | tee eval/data-floyd.csv'
 
