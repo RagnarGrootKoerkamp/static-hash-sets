@@ -1,10 +1,4 @@
-//! A dense_hash_set for u64 keys.
-//!
-//! Compared to std::collections::HashSet<u64>, this uses a different layout: no metadata table, just plain data.
-//! This is similar to Google's dense_hash_map, which predates the SwissTable design. By avoiding a metadata table,
-//! we may need to do longer probe sequences (each probe is 8 bytes, not 1 byte), but on the other hand we only take
-//! 1 cache miss per access, not 2.
-
+//! Map each key to a bucket (cache line) of size k=8 using a non-minimal k-PHF, then check if its there.
 use super::BIN_SIZE;
 use crate::traits::HashSet;
 use crate::u64_hashset::Bin;

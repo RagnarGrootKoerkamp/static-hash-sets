@@ -8,7 +8,10 @@
 )]
 
 pub mod cuckoo;
+pub mod fph_table;
 pub mod kphf_set;
+pub mod phf_set;
+pub mod phf_trait;
 #[cfg(test)]
 mod test;
 mod traits;
@@ -17,8 +20,10 @@ mod u64_hashset;
 use std::{cell::RefCell, hash::BuildHasherDefault, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
+use fph_table::{FphDynSet, FphMetaSet};
 use kphf::space_lower_bound;
 use kphf_set::KphfSet;
+use phf_set::PhfSet;
 use rand::seq::IndexedRandom;
 use traits::HashSet;
 use u64_hashset::U64HashSet;
@@ -42,10 +47,38 @@ const MODES: [&str; 2] = ["loop", "prefetch"];
 fn main() {
     let ns = (0..)
         .map(|i| (1_000_000. * 2.5f32.powi(i)) as usize)
-        .take_while(|x| *x <= 100_000_000)
+        .take_while(|x| *x <= 1_000_000_000)
         .collect::<Vec<_>>();
+    let ns = [10_000_000];
 
     let hashers = vec![
+        // PtrHash
+        (
+            |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                Some(Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
+            } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+            vec![0.99],
+        ),
+        // non-minimal PHast
+        (
+            |_alpha: f32, keys: &[T]| {
+                Some(
+                    Box::new(PhfSet::<phf_trait::PHastMinimal>::new(0.0, 0.0, keys))
+                        as Box<dyn HashSet>,
+                )
+            },
+            // TODO?
+            vec![0.99],
+        ),
+        // PHast
+        (
+            |_alpha: f32, keys: &[T]| {
+                Some(Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
+            },
+            // TODO?
+            vec![0.99],
+        ),
+        // SwissTable
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 Some(Box::new(hashbrown::HashSet::<T, FxHasher>::from_iter(
@@ -54,10 +87,12 @@ fn main() {
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![0.5],
         ),
+        // U64HashSet
         (
             |alpha: f32, keys: &[T]| Some(Box::new(U64HashSet::new(1. / alpha, keys))),
             vec![0.7, 0.8, 0.9, 0.95],
         ),
+        // Eager Cuckoo
         (
             |alpha: f32, keys: &[T]| {
                 Some(Box::new(CuckooSet::<{ Mode::Eager }>::new(
@@ -67,14 +102,16 @@ fn main() {
             },
             vec![0.7, 0.8, 0.9, 0.99],
         ),
+        // Lazy Cuckoo
         (
             |alpha: f32, keys: &[T]| {
                 Some(Box::new(CuckooSet::<{ Mode::Lazy }>::new(1. / alpha, keys)))
             },
             vec![0.7, 0.8, 0.9, 0.99],
         ),
+        // k-PHF-set
         (
-            |alpha: f32, keys: &[T]| {
+            |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 Some(Box::new(
                     KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
                         alpha,
@@ -82,19 +119,23 @@ fn main() {
                         keys,
                     ),
                 ))
+            } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+            // vec![0.7, 0.8, 0.9, 0.99],
+            // vec![0.9, 0.99],
+            vec![0.9],
+        ),
+        // FPH
+        (
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(FphDynSet::new(alpha, keys)?) as Box<dyn HashSet>)
             },
-            vec![0.7, 0.8, 0.9, 0.99],
+            vec![0.98],
         ),
         (
             |alpha: f32, keys: &[T]| {
-                let h = KphfSet::<{ kphf::Mode::Sort }, BIN_SIZE>::try_new(
-                    alpha,
-                    1.7 * space_lower_bound(BIN_SIZE, alpha),
-                    keys,
-                )?;
-                Some(Box::new(h))
+                Some(Box::new(FphMetaSet::new(alpha, keys)?) as Box<dyn HashSet>)
             },
-            vec![0.7, 0.8, 0.9],
+            vec![0.98],
         ),
     ];
     for repeat in 0..REPEATS {

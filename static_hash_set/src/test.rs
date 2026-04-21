@@ -1,4 +1,5 @@
 use super::*;
+use fph_table::{FphDynSet, FphMetaSet};
 
 #[test]
 fn test() {
@@ -27,6 +28,8 @@ fn test() {
             2.0 * space_lower_bound(BIN_SIZE, 0.9),
             &[],
         )) as Box<dyn HashSet>,
+        Box::new(FphDynSet::new(0.9, &[]).unwrap()) as Box<dyn HashSet>,
+        Box::new(FphMetaSet::new(0.9, &[]).unwrap()) as Box<dyn HashSet>,
     ];
 
     for n in [100_000, 1_000_000] {
