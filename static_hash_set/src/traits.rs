@@ -36,7 +36,7 @@ pub trait HashSet: Send + Sync {
         let lookahead = 32;
         let mut c = 0;
         for i in 0..keys.len().saturating_sub(lookahead) {
-            self.prefetch(keys[i + lookahead]);
+            self.prefetch(unsafe { *keys.get_unchecked(i + lookahead) });
             c += self.contains(keys[i]) as usize;
         }
         std::hint::black_box(c);
