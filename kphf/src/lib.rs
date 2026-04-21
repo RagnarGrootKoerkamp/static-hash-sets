@@ -58,7 +58,7 @@ pub struct KptrHash<const MODE: Mode, const K: usize> {
     salt: u64,
 }
 
-const PADDING: usize = 1 << 6;
+const PADDING: usize = 1 << 7;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, std::marker::ConstParamTy)]
 pub enum Mode {
@@ -111,7 +111,7 @@ pub fn space_lower_bound(k: usize, alpha: f32) -> f32 {
     TABLE[row][col]
 }
 
-const SEED_MASK: u64 = 0b0011_1111;
+const SEED_MASK: u64 = 0b0111_1111;
 
 impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
@@ -223,7 +223,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
             // 4. init bin sizes
             let mut bin_sizes = vec![0u8; self.num_bins];
-            let mut non_full_bins = sux::bit_vec![true; self.num_bins];
+            let mut non_full_bins = sux::bit_vec![u128: true; self.num_bins];
 
             // Do not initialize with 0, because that indicates bumping of empty buckets.
             let mut seeds = vec![255u8; self.num_buckets + 7];
@@ -284,13 +284,13 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     seed_offset.to_be_bytes()
                 );
 
-                let mut mask = u64::MAX;
+                let mut mask = u128::MAX;
                 let mut max_count: usize;
                 let mut counts = vec![0i64; K + 1];
 
                 'seed: for seed in 0..256_usize {
-                    if seed % 64 == 0 {
-                        mask = u64::MAX;
+                    if seed % 128 == 0 {
+                        mask = u128::MAX;
                         bins.clear();
                         bin_counts.clear();
 
@@ -325,11 +325,11 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
                         for &(bi, _count) in &bin_counts {
                             // update mask
-                            mask &= sux::traits::BitVecValueOps::<usize>::get_value(
+                            mask &= sux::traits::BitVecValueOps::<u128>::get_value(
                                 &non_full_bins,
                                 bi,
-                                64,
-                            ) as u64;
+                                128,
+                            );
                         }
                         // eprintln!("Bin sizes for seed {seed}: {}", bins.len());
                     }
@@ -337,10 +337,10 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                         // this one is reserved for bumping, but we need it for the target bins.
                         continue 'seed;
                     }
-                    if (mask >> (seed % 64)) & 1 == 0 {
+                    if (mask >> (seed % 128)) & 1 == 0 {
                         continue 'seed;
                     }
-                    if i == 0 && (!bump || seed != 1) && (seed % 64) != 0 {
+                    if i == 0 && (!bump || seed != 1) && (seed % 128) != 0 {
                         // For the first bucket, everything is still empty so no use in shifting.
                         continue 'seed;
                     }
