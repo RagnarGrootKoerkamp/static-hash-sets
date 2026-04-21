@@ -1,4 +1,5 @@
-use fxhash::{FxBuildHasher, FxHasher};
+use ptr_hash::hash::Gx;
+use seedable_hash::BuildGxHash;
 
 use super::T;
 
@@ -44,7 +45,7 @@ pub trait HashSet: Send + Sync {
 }
 
 // FIXME: Prefetch
-impl HashSet for hashbrown::HashSet<T, FxBuildHasher> {
+impl HashSet for hashbrown::HashSet<T, gxhash::GxBuildHasher> {
     fn name(&self) -> &'static str {
         "FxHashSet"
     }
@@ -61,13 +62,13 @@ impl HashSet for hashbrown::HashSet<T, FxBuildHasher> {
     }
 }
 
-impl HashSet for fastbloom::BloomFilter<FxBuildHasher> {
+impl HashSet for fastbloom::BloomFilter<gxhash::GxBuildHasher> {
     fn name(&self) -> &'static str {
         "BloomFilter"
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
         let h = fastbloom::BloomFilter::with_false_pos(0.01)
-            .hasher(FxBuildHasher::default())
+            .hasher(gxhash::GxBuildHasher::default())
             .items(keys.iter().copied());
         // eprintln!("\nBits/elem:  {}", h.num_bits() as f32 / keys.len() as f32);
         // eprintln!("Num hashes: {}", h.num_hashes());
@@ -82,7 +83,7 @@ impl HashSet for fastbloom::BloomFilter<FxBuildHasher> {
     }
 }
 
-impl HashSet for cuckoofilter::CuckooFilter<FxHasher> {
+impl HashSet for cuckoofilter::CuckooFilter<Gx> {
     fn name(&self) -> &'static str {
         "CuckooFilter"
     }

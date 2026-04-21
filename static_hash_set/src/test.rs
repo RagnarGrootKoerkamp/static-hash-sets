@@ -4,7 +4,7 @@ use fph_table::{FphDynSet, FphMetaSet};
 #[test]
 fn test() {
     let hashers = vec![
-        Box::new(hashbrown::HashSet::<T, FxHasher>::default()) as Box<dyn HashSet>,
+        Box::new(hashbrown::HashSet::<T, gxhash::GxBuildHasher>::default()) as Box<dyn HashSet>,
         Box::new(U64HashSet::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::Lazy }>::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::Eager }>::new(1.1, &[])),

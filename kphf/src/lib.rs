@@ -1,7 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(widening_mul, adt_const_params, generic_const_exprs)]
 
-use std::{fmt::Debug, hint::cold_path};
+use std::{fmt::Debug, hash::Hasher, hint::cold_path};
 use sux::{traits::BitVecOpsMut, utils::prefetch_index};
 
 pub trait KphfT {
@@ -116,7 +116,9 @@ const SEED_MASK: u64 = 0b0111_1111;
 impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
     fn to_bucket<T: Key>(&self, key: T) -> usize {
-        let x = fxhash::hash64(&(key ^ T::from_seed(self.salt))) as usize;
+        let mut hasher = gxhash::GxHasher::default();
+        (key ^ T::from_seed(self.salt)).hash(&mut hasher);
+        let x = hasher.finish() as usize;
         let sq = mul(x, x);
         let four = mul(sq, sq);
         // add an epsilon to avoid too large buckets?
@@ -127,10 +129,10 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
     fn to_bin<T: Key>(&self, key: T, seed: u64) -> usize {
         // The low 6 bits indicate a shift.
-        (fxhash::hash64(&(key ^ T::from_seed(seed & !SEED_MASK))) as usize)
-            .widening_mul(self.num_bins - PADDING)
-            .1
-            + (seed & SEED_MASK) as usize
+        let mut hasher = gxhash::GxHasher::default();
+        (key ^ T::from_seed(seed & !SEED_MASK)).hash(&mut hasher);
+        let x = hasher.finish() as usize;
+        x.widening_mul(self.num_bins - PADDING).1 + (seed & SEED_MASK) as usize
     }
 
     pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {

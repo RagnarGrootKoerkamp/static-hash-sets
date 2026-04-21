@@ -13,7 +13,7 @@ use crate::traits::HashSet;
 use crate::S;
 use crate::T;
 
-type Hasher = BuildHasherDefault<rustc_hash::FxHasher>;
+type Hasher = BuildHasherDefault<gxhash::GxHasher>;
 
 pub struct U64HashSet {
     pub slot_ratio: f32,

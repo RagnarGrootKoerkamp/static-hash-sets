@@ -13,7 +13,7 @@ use crate::u64_hashset::Bin;
 use crate::S;
 use crate::T;
 
-type Hasher = BuildHasherDefault<rustc_hash::FxHasher>;
+type Hasher = BuildHasherDefault<gxhash::GxHasher>;
 
 #[derive(PartialEq, Eq, Debug, std::marker::ConstParamTy)]
 pub enum Mode {

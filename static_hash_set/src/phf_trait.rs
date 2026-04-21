@@ -1,6 +1,6 @@
 use ph::{
     phast::{self, compressed_array::CompactFast},
-    seedable_hash, GetSize,
+    GetSize,
 };
 use ptr_hash::DefaultPtrHash;
 
@@ -13,7 +13,7 @@ use super::T;
 /// on top of that, for faster queries:
 /// - single part
 /// - no remapping
-pub type PtrHash = ptr_hash::DefaultPtrHash;
+pub type PtrHash = ptr_hash::DefaultPtrHash<ptr_hash::hash::Gx>;
 
 pub trait Phf {
     fn name(&self) -> &'static str;

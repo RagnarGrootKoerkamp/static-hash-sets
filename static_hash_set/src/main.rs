@@ -27,7 +27,7 @@ use phf_set::PhfSet;
 use rand::seq::IndexedRandom;
 use traits::HashSet;
 use u64_hashset::U64HashSet;
-type FxHasher = BuildHasherDefault<fxhash::FxHasher>;
+type GxHasher = BuildHasherDefault<gxhash::GxHasher>;
 
 // type T = u32;
 // const BUCKET_SIZE: usize = 16;
@@ -53,11 +53,34 @@ fn main() {
     let ns = [10_000_000];
 
     let hashers = vec![
+        // k-PHF-set
+        (
+            |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                Some(Box::new(
+                    KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
+                        alpha,
+                        1.5 * space_lower_bound(BIN_SIZE, alpha),
+                        keys,
+                    ),
+                ))
+            } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+            // vec![0.7, 0.8, 0.9, 0.99],
+            // vec![0.9, 0.99],
+            vec![0.9],
+        ),
         // PtrHash
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 Some(Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+            vec![0.99],
+        ),
+        // non-minimal PHast
+        (
+            |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                Some(Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
+            } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+            // TODO?
             vec![0.99],
         ),
         // non-minimal PHast
@@ -71,20 +94,12 @@ fn main() {
             // TODO?
             vec![0.99],
         ),
-        // PHast
-        (
-            |_alpha: f32, keys: &[T]| {
-                Some(Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
-            },
-            // TODO?
-            vec![0.99],
-        ),
         // SwissTable
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                Some(Box::new(hashbrown::HashSet::<T, FxHasher>::from_iter(
-                    keys.iter().cloned(),
-                )))
+                Some(Box::new(
+                    hashbrown::HashSet::<T, gxhash::GxBuildHasher>::from_iter(keys.iter().cloned()),
+                ))
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![0.5],
         ),
@@ -109,21 +124,6 @@ fn main() {
                 Some(Box::new(CuckooSet::<{ Mode::Lazy }>::new(1. / alpha, keys)))
             },
             vec![0.7, 0.8, 0.9, 0.99],
-        ),
-        // k-PHF-set
-        (
-            |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                Some(Box::new(
-                    KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
-                        alpha,
-                        1.5 * space_lower_bound(BIN_SIZE, alpha),
-                        keys,
-                    ),
-                ))
-            } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
-            // vec![0.7, 0.8, 0.9, 0.99],
-            // vec![0.9, 0.99],
-            vec![0.9],
         ),
         // FPH
         (
