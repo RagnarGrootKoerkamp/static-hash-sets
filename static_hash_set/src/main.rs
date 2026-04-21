@@ -38,7 +38,13 @@ type S = wide::i64x4;
 const QUERIES: usize = 3_000_000;
 const REPEATS: usize = 3;
 const QUERY_REPEATS: usize = 3;
+#[cfg(all(not(feature = "diffie"), not(feature = "floyd")))]
 const THREADS: [usize; 2] = [1, 12];
+#[cfg(feature = "diffie")]
+const THREADS: [usize; 4] = [1, 48, 96, 192];
+#[cfg(feature = "floyd")]
+const THREADS: [usize; 4] = [1, 32, 64, 128];
+
 // const THREADS: [usize; 0] = [];
 const PERCENTILES: [f64; 3] = [0.01, 0.5, 0.99];
 const MODES: [&str; 2] = ["loop", "prefetch"];
