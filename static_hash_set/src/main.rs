@@ -17,7 +17,7 @@ mod test;
 mod traits;
 mod u64_hashset;
 
-use std::{cell::RefCell, hash::BuildHasherDefault, hint::black_box};
+use std::{cell::RefCell, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
 use fph_table::{FphDynSet, FphMetaSet};
