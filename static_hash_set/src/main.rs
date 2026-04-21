@@ -27,7 +27,6 @@ use phf_set::PhfSet;
 use rand::seq::IndexedRandom;
 use traits::HashSet;
 use u64_hashset::U64HashSet;
-type GxHasher = BuildHasherDefault<gxhash::GxHasher>;
 
 // type T = u32;
 // const BUCKET_SIZE: usize = 16;

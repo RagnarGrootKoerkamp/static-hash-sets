@@ -1,6 +1,3 @@
-use ptr_hash::hash::Gx;
-use seedable_hash::BuildGxHash;
-
 use super::T;
 
 pub trait HashSet: Send + Sync {
@@ -83,7 +80,7 @@ impl HashSet for fastbloom::BloomFilter<gxhash::GxBuildHasher> {
     }
 }
 
-impl HashSet for cuckoofilter::CuckooFilter<Gx> {
+impl HashSet for cuckoofilter::CuckooFilter<gxhash::GxHasher> {
     fn name(&self) -> &'static str {
         "CuckooFilter"
     }
