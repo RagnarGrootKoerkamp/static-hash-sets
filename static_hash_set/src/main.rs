@@ -36,8 +36,9 @@ type T = u64;
 const BIN_SIZE: usize = 8;
 type S = wide::i64x4;
 
-const QUERIES: usize = 10_000_000;
+const QUERIES: usize = 3_000_000;
 const REPEATS: usize = 3;
+const QUERY_REPEATS: usize = 3;
 const THREADS: [usize; 2] = [1, 12];
 // const THREADS: [usize; 0] = [];
 const PERCENTILES: [f64; 3] = [0.01, 0.5, 0.99];
@@ -242,56 +243,59 @@ impl Bencher {
         let pf = h.has_prefetch();
         for &threads in &THREADS {
             for metric in MODES {
-                let mut query = [0f32; 5];
-                for (qi, &_p) in PERCENTILES.iter().enumerate() {
-                    let start = std::time::Instant::now();
-                    let worker = |qs: &[T]| match metric {
-                        "loop" => {
-                            let c = h.count_loop(&qs);
-                            black_box(c);
-                        }
-                        "prefetch" => {
-                            let c = h.count_prefetch(&qs);
-                            black_box(c);
-                        }
-                        _ => unreachable!(),
-                    };
-                    if threads == 1 {
-                        let qs = &self.queries[0][repeat][qi];
-                        worker(qs);
-                    } else {
-                        std::thread::scope(|scope| {
-                            for t in 0..threads {
-                                let qs = &self.queries[t][repeat][qi];
-                                scope.spawn(move || worker(qs));
+                for query_repeat in 0..QUERY_REPEATS {
+                    let mut query = [0f32; 5];
+                    for (qi, &_p) in PERCENTILES.iter().enumerate() {
+                        let start = std::time::Instant::now();
+                        let worker = |qs: &[T]| match metric {
+                            "loop" => {
+                                let c = h.count_loop(&qs);
+                                black_box(c);
                             }
-                        });
+                            "prefetch" => {
+                                let c = h.count_prefetch(&qs);
+                                black_box(c);
+                            }
+                            _ => unreachable!(),
+                        };
+                        if threads == 1 {
+                            let qs = &self.queries[0][repeat][qi];
+                            worker(qs);
+                        } else {
+                            std::thread::scope(|scope| {
+                                for t in 0..threads {
+                                    let qs = &self.queries[t][repeat][qi];
+                                    scope.spawn(move || worker(qs));
+                                }
+                            });
+                        }
+                        query[qi] = start.elapsed().as_nanos() as f32 / (threads * QUERIES) as f32;
                     }
-                    query[qi] = start.elapsed().as_nanos() as f32 / (threads * QUERIES) as f32;
+                    let result = Result {
+                        h: name.to_string(),
+                        pf,
+                        n: self.n,
+                        alpha,
+                        repeat: repeat * QUERY_REPEATS + query_repeat,
+                        threads,
+                        metric,
+                        build,
+                        bumped_frac,
+                        overhead,
+                        kphf_target_bits_per_key,
+                        kphf_bits_per_key,
+                        // kphf_alpha,
+                        q01: query[0],
+                        q10: 0.0,
+                        q50: query[1],
+                        q90: 0.0,
+                        q99: query[2],
+                    };
+                    CSV_WRITER.with_borrow_mut(|w| {
+                        w.serialize(&result).unwrap();
+                        w.flush().unwrap();
+                    });
                 }
-                let result = Result {
-                    h: name.to_string(),
-                    pf,
-                    n: self.n,
-                    alpha,
-                    repeat,
-                    threads,
-                    metric,
-                    build,
-                    bumped_frac,
-                    overhead,
-                    kphf_target_bits_per_key,
-                    kphf_bits_per_key,
-                    q01: query[0],
-                    q10: 0.0,
-                    q50: query[1],
-                    q90: 0.0,
-                    q99: query[2],
-                };
-                CSV_WRITER.with_borrow_mut(|w| {
-                    w.serialize(&result).unwrap();
-                    w.flush().unwrap();
-                });
             }
         }
     }

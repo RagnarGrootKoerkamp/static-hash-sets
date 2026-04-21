@@ -65,7 +65,7 @@ impl Phf for PHast {
     }
 
     fn new(keys: &[T]) -> Self {
-        let params = phast::Params::new(ph::seeds::Bits8, 415);
+        let params = phast::Params::new(ph::seeds::Bits8, 410);
         Self::with_slice_p_threads_hash_sc(
             keys,
             &params,
@@ -104,7 +104,7 @@ impl Phf for PHastMinimal {
     }
 
     fn new(keys: &[T]) -> Self {
-        let params = phast::Params::new(ph::seeds::Bits8, 415);
+        let params = phast::Params::new(ph::seeds::Bits8, 410);
         Self::with_slice_p_threads_hash_sc(
             keys,
             &params,
