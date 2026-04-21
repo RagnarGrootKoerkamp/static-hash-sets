@@ -1,5 +1,5 @@
 [workspace]
-members = ["kphf", "static_hash_set"]
+members = ["fph-table-sys","kphf", "static_hash_set"]
 resolver = "3"
 
 [profile.release]
