@@ -85,10 +85,6 @@ pub enum Mode {
     SortBump,
     /// Process buckets large to small, and allow bumping. Always take first working seed.
     SortBumpGreedy,
-    /// Process buckets left to right, and backtrack
-    Consensus,
-    /// Process buckets left to right, and backtrack. Always take first working seed.
-    ConsensusGreedy,
 }
 
 /// Information-theoretic lower bound on bits/key for a static hash function
@@ -169,15 +165,11 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     fn build<T: Key>(&mut self, keys: &[T]) -> Option<()> {
         let start = std::time::Instant::now();
         let sort = matches!(MODE, Mode::Sort | Mode::SortBump | Mode::SortBumpGreedy);
-        let consensus = matches!(MODE, Mode::Consensus | Mode::ConsensusGreedy);
         let bump = matches!(
             MODE,
             Mode::LinearBump | Mode::SortBump | Mode::LinearBumpGreedy | Mode::SortBumpGreedy
         );
-        let greedy = matches!(
-            MODE,
-            Mode::LinearBumpGreedy | Mode::SortBumpGreedy | Mode::ConsensusGreedy
-        );
+        let greedy = matches!(MODE, Mode::LinearBumpGreedy | Mode::SortBumpGreedy);
 
         let n = self.n;
 
@@ -238,10 +230,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
             // Do not initialize with 0, because that indicates bumping of empty buckets.
             let mut seeds = vec![255u8; self.num_buckets + 7];
-            let mut tries = vec![0u8; self.num_buckets];
 
             let mut bumped = 0;
-            let mut backtracks = 0;
             let mut i = 0;
 
             let mut bumped_keys: Vec<T> = vec![];
@@ -282,18 +272,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 let bucket = &keys[start..end];
 
                 // hash all keys with all seeds, and collect bin size statistics
-                let mut vals = vec![(usize::MAX, i64::MAX, usize::MAX)];
-
-                let seed_offset = if consensus {
-                    u64::from_be_bytes(seeds[i..i + 8].try_into().unwrap())
-                } else {
-                    0
-                };
-                assert!(
-                    seed_offset % 256 == 0,
-                    "{seed_offset:>0x} {:?}",
-                    seed_offset.to_be_bytes()
-                );
+                let mut best = (usize::MAX, i64::MAX, usize::MAX);
 
                 let mut mask = u128::MAX;
                 let mut max_count: usize;
@@ -307,7 +286,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
                         // Get the bins this set of keys maps to.
                         for (x, _key) in bucket {
-                            let bi = self.to_bin(*x, seed_offset + seed as u64);
+                            let bi = self.to_bin(*x, seed as u64);
                             bins.push(bi);
                         }
 
@@ -372,7 +351,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                         }
                     }
 
-                    let score = if !greedy && !consensus {
+                    let score = if !greedy {
                         for i in 1..=K {
                             counts[i] += counts[i - 1];
                         }
@@ -385,56 +364,12 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     } else {
                         0
                     };
-                    if consensus {
-                        vals.push((0, score, seed));
-                    } else {
-                        if score < vals[0].1 {
-                            vals[0] = (0, score, seed);
-                        }
+                    if score < best.1 {
+                        best = (0, score, seed);
                     }
-                    if greedy && (consensus || tries[i] < vals.len() as u8) {
+                    if greedy {
                         break;
                     }
-                }
-                if vals.len() > 1 {
-                    vals.sort_by(|x, y| x.partial_cmp(y).unwrap());
-                }
-                let best = vals[tries[i] as usize];
-                if consensus && best.0 > 0 {
-                    backtracks += 1;
-
-                    if backtracks > n as u32 {
-                        // Too many backtracks, give up.
-                        return None;
-                    }
-
-                    // Backtrack 1 step.
-                    tries[i] = 0;
-                    if i > 0 {
-                        assert!(tries[i - 1] < 255);
-                        tries[i - 1] += 1;
-                        // Reduce the bucket size of previous seed of parent.
-
-                        let start = bucket_starts[idx - 1];
-                        let end = bucket_starts[idx];
-                        let bucket = &keys[start..end];
-
-                        let seed = u64::from_be_bytes(seeds[i - 1..i + 7].try_into().unwrap());
-
-                        for (x, _key) in bucket {
-                            let bi = self.to_bin(*x, seed);
-                            assert!(bin_sizes[bi] > 0);
-                            bin_sizes[bi] -= 1;
-                            non_full_bins.set(bi, true);
-                        }
-
-                        seeds[i + 6] = 0;
-                        i -= 1;
-                    }
-                    if i == 0 {
-                        seeds[6] += 1;
-                    }
-                    continue;
                 }
 
                 if best.0 > 0 {
@@ -452,7 +387,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     i += 1;
                     bumped_keys.extend(bucket.iter().map(|&(_x, key)| key));
                     // Bumped keys get seed 0
-                    seeds[idx + 7] = 0;
+                    seeds[idx] = 0;
                     continue;
                 }
 
@@ -461,11 +396,11 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     assert!(seed > 0);
                 }
                 assert!(seed < 256);
-                seeds[idx + 7] = seed as u8;
+                seeds[idx] = seed as u8;
 
                 for (x, _key) in bucket {
-                    let bi = self.to_bin(*x, seed_offset + seed as u64);
-                    assert!( bin_sizes[bi] < K as u8, "collision at {i} size {len} seed {seed} offset {seed_offset:>0x} best {best:?} bin id {bi} bin size {}", bin_sizes[bi]);
+                    let bi = self.to_bin(*x, seed as u64);
+                    assert!( bin_sizes[bi] < K as u8, "collision at {i} size {len} seed {seed} best {best:?} bin id {bi} bin size {}", bin_sizes[bi]);
                     bin_sizes[bi] += 1;
                     if bin_sizes[bi] == K as u8 {
                         non_full_bins.set(bi, false);
@@ -535,18 +470,14 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     pub fn prefetch<T: Key>(&self, key: T) {
         let x = self.hash_key(key);
         let bi = self.to_bucket(x);
-        prefetch_index(&self.seeds, bi + 7);
+        prefetch_index(&self.seeds, bi);
     }
     #[inline(always)]
     pub fn get<T: Key>(&self, key: T) -> usize {
         let x = self.hash_key(key);
 
         let bi = self.to_bucket(x);
-        let seed = if matches!(MODE, Mode::Consensus) {
-            u64::from_be_bytes(self.seeds[bi..bi + 8].try_into().unwrap())
-        } else {
-            unsafe { *self.seeds.get_unchecked(bi + 7) as u64 }
-        };
+        let seed = unsafe { *self.seeds.get_unchecked(bi) as u64 };
         if matches!(
             MODE,
             Mode::LinearBump | Mode::SortBump | Mode::LinearBumpGreedy | Mode::SortBumpGreedy
@@ -589,7 +520,6 @@ mod test {
                 test_config::<{ Mode::LinearBump }, 8>(&keys, alpha, bits_per_key);
                 test_config::<{ Mode::Sort }, 8>(&keys, alpha, bits_per_key);
                 test_config::<{ Mode::SortBump }, 8>(&keys, alpha, bits_per_key);
-                test_config::<{ Mode::Consensus }, 8>(&keys, alpha, bits_per_key);
             }
         }
     }

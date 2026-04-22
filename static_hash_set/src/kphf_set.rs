@@ -136,8 +136,6 @@ impl<const MODE: kphf::Mode, const K: usize> HashSet for KphfSet<MODE, K> {
             kphf::Mode::Sort => "KphfSet<Sort>",
             kphf::Mode::SortBump => "KphfSet<SortBump>",
             kphf::Mode::SortBumpGreedy => "KphfSet<SortBumpGreedy>",
-            kphf::Mode::Consensus => "KphfSet<Consensus>",
-            kphf::Mode::ConsensusGreedy => "KphfSet<ConsensusGreedy>",
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
