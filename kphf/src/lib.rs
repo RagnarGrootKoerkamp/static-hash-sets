@@ -484,7 +484,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         ) && seed == 0
         {
             cold_path();
-            self.num_bins + self.bumped.as_ref().unwrap().get(key)
+            self.num_bins + unsafe { self.bumped.as_ref().unwrap_unchecked().get(key) }
         } else {
             self.to_bin(x, seed)
         }
