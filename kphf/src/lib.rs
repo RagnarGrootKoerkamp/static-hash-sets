@@ -1,7 +1,11 @@
 #![allow(incomplete_features)]
 #![feature(widening_mul, adt_const_params, generic_const_exprs)]
 
-use std::{fmt::Debug, hash::Hasher, hint::cold_path};
+use std::{
+    fmt::Debug,
+    hash::{Hash, Hasher},
+    hint::cold_path,
+};
 use sux::{traits::BitVecOpsMut, utils::prefetch_index};
 
 pub trait KphfT {
@@ -14,7 +18,7 @@ pub trait KphfT {
     fn get(&mut self, key: u32) -> usize;
 }
 
-fn mul(a: usize, b: usize) -> usize {
+fn mul(a: u64, b: u64) -> u64 {
     a.widening_mul(b).1
 }
 
@@ -23,6 +27,7 @@ pub trait Key:
 {
     const SALT: Self;
     fn from_seed(seed: u64) -> Self;
+    fn as_u64(&self) -> u64;
 }
 
 impl Key for u32 {
@@ -30,12 +35,18 @@ impl Key for u32 {
     fn from_seed(seed: u64) -> Self {
         seed as u32
     }
+    fn as_u64(&self) -> u64 {
+        *self as u64
+    }
 }
 
 impl Key for u64 {
     const SALT: Self = 13245;
     fn from_seed(seed: u64) -> Self {
         seed
+    }
+    fn as_u64(&self) -> u64 {
+        *self
     }
 }
 
@@ -115,24 +126,20 @@ const SEED_MASK: u64 = 0b0111_1111;
 
 impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
-    fn to_bucket<T: Key>(&self, key: T) -> usize {
-        let mut hasher = gxhash::GxHasher::default();
-        (key ^ T::from_seed(self.salt)).hash(&mut hasher);
-        let x = hasher.finish() as usize;
+    fn to_bucket(&self, hash: u64) -> usize {
+        let x = hash;
         let sq = mul(x, x);
         let four = mul(sq, sq);
         // add an epsilon to avoid too large buckets?
         // let four = four + ((x - four) >> 4);
-        four.widening_mul(self.num_buckets).1
+        four.widening_mul(self.num_buckets as u64).1 as usize
     }
 
     #[inline(always)]
-    fn to_bin<T: Key>(&self, key: T, seed: u64) -> usize {
-        // The low 6 bits indicate a shift.
-        let mut hasher = gxhash::GxHasher::default();
-        (key ^ T::from_seed(seed & !SEED_MASK)).hash(&mut hasher);
-        let x = hasher.finish() as usize;
-        x.widening_mul(self.num_bins - PADDING).1 + (seed & SEED_MASK) as usize
+    fn to_bin(&self, hash: u64, seed: u64) -> usize {
+        pub const C: u64 = 0x517cc1b727220a95;
+        let y = (hash ^ (seed >> 7)).wrapping_mul(C);
+        (y.widening_mul((self.num_bins - PADDING) as u64).1 + (seed & SEED_MASK)) as usize
     }
 
     pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
@@ -187,7 +194,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             // 1. count keys per bucket
             let mut bucket_sizes = vec![0; self.num_buckets + 1];
             for key in keys {
-                let bi = self.to_bucket(*key);
+                let x = self.hash_key(*key);
+                let bi = self.to_bucket(x);
                 bucket_sizes[bi] += 1;
             }
             // eprintln!("KEYS: {keys:?}");
@@ -200,10 +208,11 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 bucket_starts[i] = x;
             }
             // 3. write keys into buckets
-            let mut bucketed_keys = vec![T::default(); n];
+            let mut bucketed_keys = vec![(0u64, T::default()); n];
             for key in keys {
-                let bi = self.to_bucket(*key);
-                bucketed_keys[bucket_starts[bi]] = *key;
+                let x = self.hash_key(*key);
+                let bi = self.to_bucket(x);
+                bucketed_keys[bucket_starts[bi]] = (x, *key);
                 bucket_starts[bi] += 1;
             }
             // 4. restore bucket_starts
@@ -297,8 +306,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                         bin_counts.clear();
 
                         // Get the bins this set of keys maps to.
-                        for key in bucket {
-                            let bi = self.to_bin(*key, seed_offset + seed as u64);
+                        for (x, _key) in bucket {
+                            let bi = self.to_bin(*x, seed_offset + seed as u64);
                             bins.push(bi);
                         }
 
@@ -412,8 +421,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
                         let seed = u64::from_be_bytes(seeds[i - 1..i + 7].try_into().unwrap());
 
-                        for &key in bucket {
-                            let bi = self.to_bin(key, seed);
+                        for (x, _key) in bucket {
+                            let bi = self.to_bin(*x, seed);
                             assert!(bin_sizes[bi] > 0);
                             bin_sizes[bi] -= 1;
                             non_full_bins.set(bi, true);
@@ -441,7 +450,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                     }
                     bumped += bucket.len();
                     i += 1;
-                    bumped_keys.extend_from_slice(bucket);
+                    bumped_keys.extend(bucket.iter().map(|&(_x, key)| key));
                     // Bumped keys get seed 0
                     seeds[idx + 7] = 0;
                     continue;
@@ -454,8 +463,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
                 assert!(seed < 256);
                 seeds[idx + 7] = seed as u8;
 
-                for &key in bucket {
-                    let bi = self.to_bin(key, seed_offset + seed as u64);
+                for (x, _key) in bucket {
+                    let bi = self.to_bin(*x, seed_offset + seed as u64);
                     assert!( bin_sizes[bi] < K as u8, "collision at {i} size {len} seed {seed} offset {seed_offset:>0x} best {best:?} bin id {bi} bin size {}", bin_sizes[bi]);
                     bin_sizes[bi] += 1;
                     if bin_sizes[bi] == K as u8 {
@@ -513,14 +522,26 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         self.bumped.as_ref().map_or(0, |b| b.n)
     }
 
+    fn hash_key<T: Key>(&self, key: T) -> u64 {
+        // let mut hasher = fxhash::FxHasher::default();
+        // let mut hasher = wyhash::WyHash::default();
+        let mut hasher = gxhash::GxHasher::default();
+
+        (key.as_u64() ^ self.salt).hash(&mut hasher);
+        hasher.finish()
+    }
+
     #[inline(always)]
     pub fn prefetch<T: Key>(&self, key: T) {
-        let bi = self.to_bucket(key);
+        let x = self.hash_key(key);
+        let bi = self.to_bucket(x);
         prefetch_index(&self.seeds, bi + 7);
     }
     #[inline(always)]
     pub fn get<T: Key>(&self, key: T) -> usize {
-        let bi = self.to_bucket(key);
+        let x = self.hash_key(key);
+
+        let bi = self.to_bucket(x);
         let seed = if matches!(MODE, Mode::Consensus) {
             u64::from_be_bytes(self.seeds[bi..bi + 8].try_into().unwrap())
         } else {
@@ -534,7 +555,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
             cold_path();
             self.num_bins + self.bumped.as_ref().unwrap().get(key)
         } else {
-            self.to_bin(key, seed)
+            self.to_bin(x, seed)
         }
     }
 }
