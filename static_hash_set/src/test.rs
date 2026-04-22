@@ -1,5 +1,7 @@
 use super::*;
 use fph_table::{FphDynSet, FphMetaSet};
+use mapembed::MapEmbed;
+use phf_set::PhfSet;
 
 #[test]
 fn test() {
@@ -29,7 +31,9 @@ fn test() {
             &[],
         )) as Box<dyn HashSet>,
         Box::new(FphDynSet::new(0.9, &[]).unwrap()) as Box<dyn HashSet>,
-        Box::new(FphMetaSet::new(0.9, &[]).unwrap()) as Box<dyn HashSet>,
+        Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
+        Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
+        Box::new(MapEmbed::new(&[]).unwrap()) as Box<dyn HashSet>,
     ];
 
     for n in [100_000, 1_000_000] {
