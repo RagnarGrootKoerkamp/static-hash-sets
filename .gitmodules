@@ -1,5 +1,5 @@
 [submodule "fph-table-sys/third_party/fph-table"]
-	path = fph-table-sys/third_party/fph-table
+	path = ext/fph-table-sys/third_party/fph-table
 	url = github:renzibei/fph-table
 [submodule "ext/hashbrown"]
 	path = ext/hashbrown
