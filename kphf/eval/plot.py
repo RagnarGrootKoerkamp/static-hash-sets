@@ -259,18 +259,18 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                     linestyle="none",
                     markeredgewidth=1.5,
                 )
-                # ax.legend(
-                #     handles=mode_handles
-                #     + [factor_range_handle, factor_handle, bumped_handle]
-                #     + alpha_handles,
-                #     ncol=2,
-                #     loc="upper left",
-                # )
+                ax.legend(
+                    handles=mode_handles
+                    + [factor_range_handle, factor_handle, bumped_handle]
+                    + alpha_handles,
+                    ncol=2,
+                    loc="upper left",
+                )
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
     fig.savefig(output_path.with_suffix(".pdf"), bbox_inches="tight")
-    fig.savefig(output_path.with_suffix(".svg"), bbox_inches="tight")
+    # fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    # fig.savefig(output_path.with_suffix(".svg"), bbox_inches="tight")
     plt.close(fig)
 
 
