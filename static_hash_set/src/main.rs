@@ -20,7 +20,7 @@ mod u64_hashset;
 use std::{cell::RefCell, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
-use fph_table::{FphDynSet, FphMetaSet};
+use fph_table::FphDynSet;
 use kphf::space_lower_bound;
 use kphf_set::KphfSet;
 use phf_set::PhfSet;
@@ -41,9 +41,9 @@ const QUERY_REPEATS: usize = 3;
 #[cfg(all(not(feature = "diffie"), not(feature = "floyd")))]
 const THREADS: [usize; 2] = [1, 12];
 #[cfg(feature = "diffie")]
-const THREADS: [usize; 4] = [1, 48, 96, 192];
+const THREADS: [usize; 2] = [1, 192];
 #[cfg(feature = "floyd")]
-const THREADS: [usize; 4] = [1, 32, 64, 128];
+const THREADS: [usize; 2] = [1, 128];
 
 // const THREADS: [usize; 0] = [];
 const PERCENTILES: [f64; 3] = [0.01, 0.5, 0.99];
@@ -85,19 +85,7 @@ fn main() {
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 Some(Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
-            // TODO?
-            vec![0.99],
-        ),
-        // non-minimal PHast
-        (
-            |_alpha: f32, keys: &[T]| {
-                Some(
-                    Box::new(PhfSet::<phf_trait::PHastMinimal>::new(0.0, 0.0, keys))
-                        as Box<dyn HashSet>,
-                )
-            },
-            // TODO?
-            vec![0.99],
+            vec![0.98],
         ),
         // SwissTable
         (
@@ -136,13 +124,7 @@ fn main() {
             |alpha: f32, keys: &[T]| {
                 Some(Box::new(FphDynSet::new(alpha, keys)?) as Box<dyn HashSet>)
             },
-            vec![0.98],
-        ),
-        (
-            |alpha: f32, keys: &[T]| {
-                Some(Box::new(FphMetaSet::new(alpha, keys)?) as Box<dyn HashSet>)
-            },
-            vec![0.98],
+            vec![0.95],
         ),
     ];
     for repeat in 0..REPEATS {
