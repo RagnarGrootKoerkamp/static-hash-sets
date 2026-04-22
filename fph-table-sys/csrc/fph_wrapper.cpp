@@ -30,6 +30,21 @@ bool fph_dyn_set_contains(const DynSet* s, uint64_t key) {
     return s->count(key) > 0;
 }
 
+// Prefetches the slot for `key` and returns its address as an opaque token
+// (to be passed to fph_dyn_set_contains_with_token after the prefetch latency).
+uintptr_t fph_dyn_set_prefetch(const DynSet* s, uint64_t key) {
+    const uint64_t* ptr = s->GetPointerNoCheck(key);
+    __builtin_prefetch(ptr, 0, 3);
+    return reinterpret_cast<uintptr_t>(ptr);
+}
+
+// Returns true if the slot identified by `token` holds `key`.
+// `token` must be a value previously returned by fph_dyn_set_prefetch
+// for the same set instance.
+bool fph_dyn_set_contains_with_token(uint64_t key, uintptr_t token) {
+    return *reinterpret_cast<const uint64_t*>(token) == key;
+}
+
 // Slots * sizeof(u64); buckets add ~c*n/(log2(n)+1)*4 bytes but are not directly accessible.
 size_t fph_dyn_set_slot_count(const DynSet* s) {
     return s->bucket_count();

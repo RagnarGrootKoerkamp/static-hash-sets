@@ -17,6 +17,21 @@ impl FphDynSet {
             max_load_factor,
         })
     }
+
+    /// Prefetches the slot for `key` and returns an opaque token.
+    /// Pass the token to [`contains_with_token`](FphDynSet::contains_with_token)
+    /// after hiding the cache-miss latency with other work.
+    #[inline(always)]
+    pub fn prefetch(&self, key: T) -> usize {
+        self.inner.prefetch(key)
+    }
+
+    /// Returns `true` if `token` (from `prefetch_index(key)`) identifies a
+    /// slot that holds `key`.
+    #[inline(always)]
+    pub fn contains_with_token(&self, key: T, token: usize) -> bool {
+        self.inner.contains_with_token(key, token)
+    }
 }
 
 impl HashSet for FphDynSet {
@@ -36,6 +51,17 @@ impl HashSet for FphDynSet {
     #[inline(always)]
     fn contains(&self, key: T) -> bool {
         self.inner.contains(key)
+    }
+    fn has_prefetch(&self) -> bool {
+        true
+    }
+    #[inline(always)]
+    fn prefetch(&self, key: T) -> usize {
+        self.prefetch(key)
+    }
+    #[inline(always)]
+    fn contains_with_token(&self, key: T, token: usize) -> bool {
+        self.contains_with_token(key, token)
     }
 }
 

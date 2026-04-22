@@ -4,6 +4,8 @@ unsafe extern "C" {
     fn fph_dyn_set_new(keys: *const u64, len: usize, max_load_factor: f32) -> *mut c_void;
     fn fph_dyn_set_free(s: *mut c_void);
     fn fph_dyn_set_contains(s: *const c_void, key: u64) -> bool;
+    fn fph_dyn_set_prefetch(s: *const c_void, key: u64) -> usize;
+    fn fph_dyn_set_contains_with_token(key: u64, token: usize) -> bool;
     fn fph_dyn_set_slot_count(s: *const c_void) -> usize;
 
     fn fph_meta_set_new(keys: *const u64, len: usize, max_load_factor: f32) -> *mut c_void;
@@ -30,6 +32,30 @@ impl DynFphSet {
     #[inline(always)]
     pub fn contains(&self, key: u64) -> bool {
         unsafe { fph_dyn_set_contains(self.0, key) }
+    }
+
+    /// Prefetches the slot that would hold `key` and returns an opaque token
+    /// encoding the slot address. Pass the token to [`contains_with_token`]
+    /// after enough other work to hide the cache-miss latency.
+    ///
+    /// [`contains_with_token`]: DynFphSet::contains_with_token
+    #[inline(always)]
+    pub fn prefetch(&self, key: u64) -> usize {
+        unsafe { fph_dyn_set_prefetch(self.0, key) }
+    }
+
+    /// Returns `true` if `token` (returned by [`prefetch`] for `key`)
+    /// identifies a slot containing `key`.
+    ///
+    /// # Safety
+    /// `token` must have been returned by `self.prefetch(key)` on the
+    /// **same** set instance. Passing a stale or foreign token is undefined
+    /// behaviour.
+    ///
+    /// [`prefetch`]: DynFphSet::prefetch
+    #[inline(always)]
+    pub fn contains_with_token(&self, key: u64, token: usize) -> bool {
+        unsafe { fph_dyn_set_contains_with_token(key, token) }
     }
 
     /// Number of allocated slots (lower bound on memory usage; does not include bucket params).
