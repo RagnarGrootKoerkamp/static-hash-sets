@@ -11,6 +11,18 @@ w = 64
 for name in sys.argv[1:]:
     data = pd.read_csv(f"data-{name}.csv")
 
+    def cleanup_name(h):
+        if "Function2" in h:
+            return "PhfSet<PHast+minimal>"
+        if "Perfect" in h:
+            return "PhfSet<PHast+>"
+        if "PtrHash" in h:
+            return "PhfSet<PtrHash>"
+        return h
+
+    data["h"] = data["h"].map(cleanup_name)
+    data = data[~(data["h"] == "FphMetaSet")]
+
     for metric, data in data.groupby("metric"):
         data["label"] = data.apply(
             lambda row: row["h"] + " (" + str(row["alpha"]) + "x)", axis=1
@@ -43,42 +55,33 @@ for name in sys.argv[1:]:
             "KphfSet<Sort>": "lime",
             "KphfSet<SortBump>": "blue",
             "KphfSet<SortBumpGreedy>": "cyan",
+            "FphDynSet": "purple",
+            "FphMetaSet": "black",
+            "PhfSet<PHast+>": "cyan",
+            "PhfSet<PHast+minimal>": "darkred",
+            "PhfSet<PtrHash>": "lime",
         }
-        label_lw = {
-            0.5: 2,
-            0.7: 1.75,
-            0.8: 1.5,
-            0.9: 1,
-            0.95: 0.75,
-            0.99: 0.5,
-        }
-
         plt.close()
 
         titles = ["p=0.01", "p=0.50", "p=0.99"]
-        # thread_counts = sorted(data["threads"].unique())
         thread_counts = data["threads"].unique()
-        target_latencies = {
-            1: 7.5,
-            6: 2.5,
-            12: 2.5,
-        }
+        thread_counts = [1, max(thread_counts)]
         sizes = [12 * 1024 * 1024]
         cache_labels = ["L3  ", "  RAM"]
 
         nrows = len(thread_counts)
         ncols = len(queries)
         fig, axes = plt.subplots(
-            nrows, ncols, figsize=(5 * ncols, 4 * nrows), sharey=False, sharex=True
+            nrows, ncols, figsize=(5 * ncols, 4 * nrows), sharey="row", sharex=True
         )
 
         for ri, threads in enumerate(thread_counts):
             thread_data = data[data["threads"] == threads]
-            groups = thread_data.groupby(["h", "alpha", "kphf_target_bits_per_key"])
+            groups = thread_data.groupby(["h", "alpha"])
             for ci, (q, title) in enumerate(zip(queries, titles)):
                 ax = axes[ri][ci]
 
-                for (h, alpha, bpk), subset in groups:
+                for (h, alpha), subset in groups:
                     sns.lineplot(
                         data=subset,
                         x="n",
@@ -87,7 +90,7 @@ for name in sys.argv[1:]:
                         estimator=None,
                         errorbar=None,
                         color=label_color[h],
-                        lw=label_lw[alpha],
+                        lw=1.5,
                         label=h + " " + str(alpha),
                     )
                 if ri == 0:
@@ -99,25 +102,9 @@ for name in sys.argv[1:]:
                 ax.grid(True, which="both", ls="--", lw=0.5)
 
                 ax.set_ylabel(f"threads={threads}\nns / query" if ci == 0 else "")
-                ax.set_ylim(0, 30 / min(threads, 6))
-                ax.axhline(
-                    y=target_latencies[threads], color="red", lw=1, ls="--", zorder=0
-                )
+                ax.set_ylim(0)
 
-                for s, l in zip(sizes, cache_labels):
-                    ax.axvline(x=s / 4, c="black", lw=1, ls="--")
-                    ax.text(
-                        s / 4, ax.get_ylim()[0], l, ha="right", va="bottom", fontsize=8
-                    )
-                ax.text(
-                    sizes[-1] / 4,
-                    ax.get_ylim()[0],
-                    cache_labels[-1],
-                    ha="left",
-                    va="bottom",
-                    fontsize=8,
-                )
-                if ri == 0 and ci == ncols - 1 and False:
+                if ri == 0 and ci == ncols - 1:
                     ax.legend(loc="upper left", fontsize=8)
                 else:
                     ax.legend().remove() if ax.get_legend() else None

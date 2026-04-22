@@ -271,4 +271,8 @@ impl<const MODE: Mode> HashSet for CuckooSet<MODE> {
     fn contains(&self, key: T) -> bool {
         self.contains(key)
     }
+    #[inline(always)]
+    fn contains_with_token(&self, key: T, token: usize) -> bool {
+        self.contains_with_token(key, token)
+    }
 }
