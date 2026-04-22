@@ -14,7 +14,7 @@ DATASETS = [
 ALG_PATTERN = re.compile(r"Mode::(?P<mode>\w+),\s*(?P<k>\d+)>")
 METRICS = [
     ("bumped_frac", "Bumped (%)"),
-    ("actual_alpha", "Actual $\\alpha$"),
+    # ("actual_alpha", "Actual $\\alpha$"),
     ("build_ns", "Build time (ns/key)"),
     ("loop_ns", "Query time (ns/query)"),
     # ("throughput_ns", "Throughput (ns)"),
@@ -91,7 +91,9 @@ def plot_dataset_ns(data_path: Path, output_name) -> None:
     df, lower_bounds = load_data(data_path)
 
     for n, data in df.groupby("n"):
-        plot_dataset(data, lower_bounds, Path(".") / (output_name + f"-n{n:,}.png"))
+        if n != 10**8:
+            continue
+        plot_dataset(data, lower_bounds, Path(".") / (output_name + ".png"))
 
 
 def plot_dataset(df, lower_bounds, output_path: Path) -> None:
@@ -106,12 +108,12 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
     fig, axes = plt.subplots(
         len(METRICS),
         len(k_values),
-        figsize=(6 * len(k_values), 4 * len(METRICS)),
+        figsize=(4.5 * len(k_values), 3 * len(METRICS)),
         sharey="row",
         squeeze=False,
     )
 
-    fig.suptitle(f"n={df['n'].iloc[0]:,}", fontsize=16)
+    fig.suptitle(f"Performance of $k$-PtrHash", fontsize=20)
 
     for col, k in enumerate(k_values):
         subset = df[df["k"] == k]
@@ -164,9 +166,9 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                     zorder=4,
                 )
 
-            ax.set_title(f"k={k}" if row == 0 else "")
-            ax.set_xlabel("bits / key" if row == len(METRICS) - 1 else "")
-            ax.set_ylabel(ylabel if col == 0 else "")
+            ax.set_title(f"k={k}" if row == 0 else "", fontsize=16)
+            ax.set_xlabel("bits / key" if row == len(METRICS) - 1 else "", fontsize=12)
+            ax.set_ylabel(ylabel if col == 0 else "", fontsize=12)
             ax.set_xscale("log")
             ax.set_xlim(*x_limits)
             ax.set_xticks(xticks)
@@ -174,7 +176,7 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
             for tick_value, tick_label in zip(xticks, ax.get_xticklabels()):
                 for _, lb_row in lb_subset.iterrows():
                     if abs(tick_value - lb_row["lower_bound"]) < 1e-12:
-                        tick_label.set_color(alpha_colors[lb_row["alpha"]])
+                        # tick_label.set_color(alpha_colors[lb_row["alpha"]])
                         break
             if metric == "bumped_frac":
                 # ax.set_yscale("symlog", linthresh=0.1)
@@ -185,6 +187,7 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                 ax.set_yscale("log")
                 ax.set_ylim(bottom=20, top=1000)
                 ax.set_yticks([25, 50, 100, 200, 400, 800])
+                ax.set_yticks([], minor=True)
                 ax.set_yticklabels(["25", "50", "100", "200", "400", "800"])
             elif metric == "actual_alpha":
                 ax.set_ylim(bottom=0.56)
@@ -256,13 +259,13 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                     linestyle="none",
                     markeredgewidth=1.5,
                 )
-                ax.legend(
-                    handles=mode_handles
-                    + [factor_range_handle, factor_handle, bumped_handle]
-                    + alpha_handles,
-                    ncol=2,
-                    loc="upper left",
-                )
+                # ax.legend(
+                #     handles=mode_handles
+                #     + [factor_range_handle, factor_handle, bumped_handle]
+                #     + alpha_handles,
+                #     ncol=2,
+                #     loc="upper left",
+                # )
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
