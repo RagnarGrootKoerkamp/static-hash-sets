@@ -20,8 +20,16 @@ pub trait HashSet: Send + Sync {
     fn has_prefetch(&self) -> bool {
         false
     }
-    fn prefetch(&self, _key: T) {}
+
     fn contains(&self, key: T) -> bool;
+
+    fn prefetch(&self, _key: T) -> usize {
+        0
+    }
+    fn contains_with_token(&self, key: T, _token: usize) -> bool {
+        self.contains(key)
+    }
+
     fn count_loop(&self, keys: &[T]) -> usize {
         let mut c = 0;
         for &key in keys {
@@ -36,6 +44,19 @@ pub trait HashSet: Send + Sync {
         for i in 0..keys.len().saturating_sub(lookahead) {
             self.prefetch(unsafe { *keys.get_unchecked(i + lookahead) });
             c += self.contains(keys[i]) as usize;
+        }
+        std::hint::black_box(c);
+        c
+    }
+    fn count_prefetch2(&self, keys: &[T]) -> usize {
+        assert!(keys.len() >= 32);
+        let lookahead = 32;
+        let mut tokens: [usize; 32] =
+            std::array::from_fn(|i| self.prefetch(unsafe { *keys.get_unchecked(i) }));
+        let mut c = 0;
+        for i in 0..keys.len().saturating_sub(lookahead) {
+            c += self.contains_with_token(keys[i], tokens[i % 32]) as usize;
+            tokens[i % 32] = self.prefetch(unsafe { *keys.get_unchecked(i + lookahead) });
         }
         std::hint::black_box(c);
         c

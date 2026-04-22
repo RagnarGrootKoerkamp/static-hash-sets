@@ -94,22 +94,25 @@ impl<const MODE: Mode> CuckooSet<MODE> {
     }
 
     #[inline(always)]
-    pub fn prefetch_first(&self, key: T) {
+    pub fn prefetch_first(&self, key: T) -> usize {
         let bin_idx = self.bin_idx_1(key);
         prefetch_index::prefetch_index(&self.table, bin_idx);
+        bin_idx
     }
     #[inline(always)]
-    pub fn prefetch_second(&self, key: T) {
+    pub fn prefetch_second(&self, key: T) -> usize {
         let bin_idx = self.bin_idx_2(key);
         prefetch_index::prefetch_index(&self.table, bin_idx);
+        bin_idx
     }
     #[inline(always)]
-    pub fn prefetch_both(&self, key: T) {
-        self.prefetch_first(key);
-        self.prefetch_second(key);
+    pub fn prefetch_both(&self, key: T) -> usize {
+        let b1 = self.prefetch_first(key);
+        let b2 = self.prefetch_second(key);
+        (b1 << 32) | (b2 as u32) as usize
     }
     #[inline(always)]
-    pub fn prefetch(&self, key: T) {
+    pub fn prefetch(&self, key: T) -> usize {
         match MODE {
             Mode::Eager => self.prefetch_both(key),
             Mode::Lazy => self.prefetch_first(key),
@@ -151,6 +154,46 @@ impl<const MODE: Mode> CuckooSet<MODE> {
         match MODE {
             Mode::Eager => self.contains_eager(key),
             Mode::Lazy => self.contains_lazy(key),
+        }
+    }
+
+    #[inline(always)]
+    pub fn contains_lazy_with_token(&self, key: T, bin1: usize) -> bool {
+        if key == 0 {
+            return self.has_zero;
+        }
+
+        let keys = S::splat(key as _);
+
+        let bin1 = self.get_bin(bin1);
+        if bin1.contains(keys) {
+            return true;
+        }
+        if bin1.has_zero() {
+            return false;
+        }
+        self.get_bin(self.bin_idx_2(key)).contains(keys)
+    }
+
+    #[inline(always)]
+    pub fn contains_eager_with_token(&self, key: T, bin: usize) -> bool {
+        if key == 0 {
+            return self.has_zero;
+        }
+
+        let keys = S::splat(key as _);
+
+        let bin1 = bin >> 32;
+        let bin2 = bin as u32 as usize;
+
+        self.get_bin(bin1).contains(keys) | self.get_bin(bin2).contains(keys)
+    }
+
+    #[inline(always)]
+    pub fn contains_with_token(&self, key: T, token: usize) -> bool {
+        match MODE {
+            Mode::Eager => self.contains_eager_with_token(key, token),
+            Mode::Lazy => self.contains_lazy_with_token(key, token),
         }
     }
 
@@ -221,7 +264,7 @@ impl<const MODE: Mode> HashSet for CuckooSet<MODE> {
         true
     }
     #[inline(always)]
-    fn prefetch(&self, key: T) {
+    fn prefetch(&self, key: T) -> usize {
         self.prefetch(key)
     }
     #[inline(always)]

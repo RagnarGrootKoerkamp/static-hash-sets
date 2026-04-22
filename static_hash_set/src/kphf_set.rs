@@ -80,9 +80,10 @@ impl<const MODE: kphf::Mode, const K: usize> KphfSet<MODE, K> {
     }
 
     #[inline(always)]
-    pub fn prefetch(&self, key: T) {
+    pub fn prefetch(&self, key: T) -> usize {
         let bin_idx = self.bin_idx(key);
         prefetch_index::prefetch_index(&self.table, bin_idx);
+        bin_idx
     }
 
     #[inline(always)]
@@ -94,6 +95,17 @@ impl<const MODE: kphf::Mode, const K: usize> KphfSet<MODE, K> {
         let keys = S::splat(key as _);
 
         let bin_idx = self.bin_idx(key);
+        let bin = self.get_bin(bin_idx);
+        bin.contains(keys)
+    }
+
+    #[inline(always)]
+    pub fn contains_with_token(&self, key: T, bin_idx: usize) -> bool {
+        if key == 0 {
+            return self.has_zero;
+        }
+
+        let keys = S::splat(key as _);
         let bin = self.get_bin(bin_idx);
         bin.contains(keys)
     }
@@ -161,11 +173,15 @@ impl<const MODE: kphf::Mode, const K: usize> HashSet for KphfSet<MODE, K> {
         true
     }
     #[inline(always)]
-    fn prefetch(&self, key: T) {
+    fn prefetch(&self, key: T) -> usize {
         KphfSet::prefetch(self, key)
     }
     #[inline(always)]
     fn contains(&self, key: T) -> bool {
         self.contains(key)
+    }
+    #[inline(always)]
+    fn contains_with_token(&self, key: T, token: usize) -> bool {
+        self.contains_with_token(key, token)
     }
 }

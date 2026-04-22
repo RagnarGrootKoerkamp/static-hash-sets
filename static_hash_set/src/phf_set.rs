@@ -67,9 +67,10 @@ impl<PHF: Phf> PhfSet<PHF> {
     }
 
     #[inline(always)]
-    pub fn prefetch(&self, key: T) {
+    pub fn prefetch(&self, key: T) -> usize {
         let bin_idx = self.bin_idx(key);
         prefetch_index::prefetch_index(&self.table, bin_idx);
+        bin_idx
     }
 
     #[inline(always)]
@@ -79,6 +80,16 @@ impl<PHF: Phf> PhfSet<PHF> {
         }
 
         let bin_idx = self.bin_idx(key);
+        let bin = self.get_bin(bin_idx);
+        bin == key
+    }
+
+    #[inline(always)]
+    pub fn contains_with_token(&self, key: T, bin_idx: usize) -> bool {
+        if key == 0 {
+            return self.has_zero;
+        }
+
         let bin = self.get_bin(bin_idx);
         bin == key
     }
@@ -139,11 +150,15 @@ impl<PHF: Phf + 'static + Sync + Send> HashSet for PhfSet<PHF> {
         true
     }
     #[inline(always)]
-    fn prefetch(&self, key: T) {
+    fn prefetch(&self, key: T) -> usize {
         PhfSet::prefetch(self, key)
     }
     #[inline(always)]
     fn contains(&self, key: T) -> bool {
         self.contains(key)
+    }
+    #[inline(always)]
+    fn contains_with_token(&self, key: T, token: usize) -> bool {
+        self.contains_with_token(key, token)
     }
 }

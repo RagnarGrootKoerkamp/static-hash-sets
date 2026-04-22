@@ -118,9 +118,10 @@ impl U64HashSet {
     }
 
     #[inline(always)]
-    pub fn prefetch(&self, key: T) {
+    pub fn prefetch(&self, key: T) -> usize {
         let bin_idx = self.bin_idx(key);
         prefetch_index::prefetch_index(&self.table, bin_idx);
+        bin_idx
     }
 
     #[inline(always)]
@@ -132,6 +133,28 @@ impl U64HashSet {
         let keys = S::splat(key as _);
 
         let mut bin_idx = self.bin_idx(key);
+        loop {
+            let bin = self.get_bin(bin_idx);
+            if bin.contains(keys) {
+                return true;
+            }
+            if bin.has_zero() {
+                return false;
+            }
+
+            bin_idx += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub fn contains_with_token(&self, key: T, mut bin_idx: usize) -> bool {
+        if key == 0 {
+            return self.has_zero;
+        }
+
+        let keys = S::splat(key as _);
+
+        // let mut bin_idx = self.bin_idx(key);
         loop {
             let bin = self.get_bin(bin_idx);
             if bin.contains(keys) {
@@ -196,11 +219,15 @@ impl HashSet for U64HashSet {
     fn has_prefetch(&self) -> bool {
         true
     }
-    fn prefetch(&self, key: T) {
+    fn prefetch(&self, key: T) -> usize {
         U64HashSet::prefetch(self, key)
     }
     #[inline(always)]
     fn contains(&self, key: T) -> bool {
         self.contains(key)
+    }
+    #[inline(always)]
+    fn contains_with_token(&self, key: T, token: usize) -> bool {
+        self.contains_with_token(key, token)
     }
 }

@@ -47,7 +47,7 @@ const THREADS: [usize; 2] = [1, 128];
 
 // const THREADS: [usize; 0] = [];
 const PERCENTILES: [f64; 3] = [0.01, 0.5, 0.99];
-const MODES: [&str; 2] = ["loop", "prefetch"];
+const MODES: [&str; 3] = ["loop", "prefetch", "prefetch2"];
 // const MODES: [&str; 1] = ["prefetch"];
 
 fn main() {
@@ -244,6 +244,10 @@ impl Bencher {
                             }
                             "prefetch" => {
                                 let c = h.count_prefetch(&qs);
+                                black_box(c);
+                            }
+                            "prefetch2" => {
+                                let c = h.count_prefetch2(&qs);
                                 black_box(c);
                             }
                             _ => unreachable!(),
