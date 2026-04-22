@@ -59,7 +59,6 @@ pub trait HashSet: Send + Sync {
     }
 }
 
-// FIXME: Prefetch
 impl HashSet for hashbrown::HashSet<T, gxhash::GxBuildHasher> {
     fn name(&self) -> &'static str {
         "FxHashSet"
@@ -74,9 +73,20 @@ impl HashSet for hashbrown::HashSet<T, gxhash::GxBuildHasher> {
     fn load_factor(&self) -> f32 {
         self.len() as f32 / self.capacity() as f32
     }
+    fn has_prefetch(&self) -> bool {
+        true
+    }
     #[inline(always)]
     fn contains(&self, key: T) -> bool {
         self.contains(&key)
+    }
+    #[inline(always)]
+    fn prefetch(&self, key: T) -> usize {
+        self.prefetch(&key) as usize
+    }
+    #[inline(always)]
+    fn contains_with_token(&self, key: T, token: usize) -> bool {
+        self.contains_with_hash(&key, token as u64)
     }
 }
 

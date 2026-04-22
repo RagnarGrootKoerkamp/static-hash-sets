@@ -11,7 +11,7 @@ floyd = []
 cuckoofilter = "0.5.0"
 fastbloom = "0.14.0"
 fxhash = "0.2.1"
-hashbrown = "0.16.0"
+hashbrown = { path = "../ext/hashbrown" }
 mem_dbg = { version = "0.3.0", features = ["derive"] }
 memsize = "0.1.4"
 prefetch-index = "0.2.0"
