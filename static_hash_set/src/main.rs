@@ -126,6 +126,13 @@ fn main() {
             },
             vec![0.95],
         ),
+        // MapEmbed
+        (
+            |_alpha: f32, keys: &[T]| {
+                Some(Box::new(mapembed::MapEmbed::new(keys)?) as Box<dyn HashSet>)
+            },
+            vec![0.9],
+        ),
     ];
     for repeat in 0..REPEATS {
         for &n in &ns {

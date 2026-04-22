@@ -1222,6 +1222,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mapembed-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "maybe-dangling"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1970,6 +1977,7 @@ dependencies = [
  "gxhash",
  "hashbrown 0.17.0",
  "kphf",
+ "mapembed-sys",
  "mem_dbg 0.3.0",
  "memsize",
  "ph",

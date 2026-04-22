@@ -4,3 +4,6 @@
 [submodule "ext/hashbrown"]
 	path = ext/hashbrown
 	url = github:rust-lang/hashbrown
+[submodule "ext/mapembed-sys/third_party/mapembed"]
+	path = ext/mapembed-sys/third_party/mapembed
+	url = github:mapembed/mapembed
