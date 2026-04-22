@@ -27,6 +27,10 @@ LINEWIDTHS = {
     "SortBump": 2.0,
     "SortBumpGreedy": 1.0,
 }
+LABELS = {
+    "SortBumpGreedy": "k-PtrHash Greedy",
+    "SortBump": "k-PtrHash Scoring",
+}
 BUMP_TICKS = [0, 1, 2, 5, 10]
 BUMP_TICK_LABELS = ["0%", "1%", "2%", "5%", "10%"]
 
@@ -214,9 +218,9 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                         color="black",
                         linestyle=LINESTYLES[mode],
                         linewidth=LINEWIDTHS[mode],
-                        label=mode,
+                        label=LABELS[mode],
                     )
-                    for mode in LINESTYLES
+                    for mode in reversed(LINESTYLES)
                 ]
                 factor_range_handle = Line2D(
                     [0],
@@ -259,15 +263,23 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
                     linestyle="none",
                     markeredgewidth=1.5,
                 )
-                ax.legend(
-                    handles=mode_handles
-                    + [factor_range_handle, factor_handle, bumped_handle]
-                    + alpha_handles,
-                    ncol=2,
-                    loc="upper left",
+                empty_handle = Line2D([], [], color="none", label="")
+                all_handles = (
+                    mode_handles
+                    + [factor_range_handle, factor_handle, bumped_handle, empty_handle]
+                    + alpha_handles
                 )
 
+    fig.legend(
+        handles=all_handles,
+        ncol=len(all_handles),
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        ncols=5,
+        fontsize=12,
+    )
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.12)
     fig.savefig(output_path.with_suffix(".pdf"), bbox_inches="tight")
     # fig.savefig(output_path, dpi=150, bbox_inches="tight")
     # fig.savefig(output_path.with_suffix(".svg"), bbox_inches="tight")
