@@ -42,13 +42,16 @@ struct Result {
 
 const REPEATS: usize = 1;
 const NS: [usize; 1] = [100_000_000];
-const ALPHAS: [f32; 4] = [0.7, 0.8, 0.9, 0.99];
+const ALPHAS: [f32; 6] = [0.7, 0.8, 0.9, 0.95, 0.98, 0.99];
 const FACTORS: [f32; 7] = [2.5, 2.25, 2.0, 1.75, 1.5, 1.25, 1.0];
 const QUERY: bool = true;
 
+// const REPEATS: usize = 1;
 // const NS: [usize; 1] = [10_000_000];
-// const ALPHAS: [f32; 3] = [0.7, 0.8, 0.9];
-// const FACTORS: [f32; 5] = [1.6, 1.5, 1.4, 1.3, 1.2];
+// const ALPHAS: [f32; 1] = [0.9];
+// const ALPHAS: [f32; 1] = [0.8];
+// const FACTORS: [f32; 7] = [1.6, 1.5, 1.4, 1.3, 1.2, 1.1, 1.05];
+// const FACTORS: [f32; 2] = [1.5, 1.8];
 // const QUERY: bool = false;
 
 fn bench<const MODE: Mode, const K: usize>()
