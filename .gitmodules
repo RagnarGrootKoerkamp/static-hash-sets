@@ -7,3 +7,6 @@
 [submodule "ext/mapembed-sys/third_party/mapembed"]
 	path = ext/mapembed-sys/third_party/mapembed
 	url = github:mapembed/mapembed
+[submodule "ext/engineering-kphf/third_party/engineering-k-perfect-hashing"]
+	path = ext/engineering-kphf/third_party/engineering-k-perfect-hashing
+	url = github:stefanfred/engineering-k-perfect-hashing

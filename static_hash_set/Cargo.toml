@@ -22,6 +22,7 @@ wide = "0.7.33"
 kphf.path = "../kphf"
 fph-table-sys = { path = "../ext/fph-table-sys" }
 mapembed-sys = { path = "../ext/mapembed-sys" }
+engineering-kphf = { path = "../ext/engineering-kphf" }
 csv = "1.4.0"
 serde = "1.0.228"
 ptr_hash = "2.0.0-alpha.1"

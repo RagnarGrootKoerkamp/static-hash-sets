@@ -1,4 +1,5 @@
 use super::*;
+use ekphf::{EkphfHd8, EkphfTbb84p, EkphfTbb85};
 use fph_table::{FphDynSet, FphMetaSet};
 use mapembed::MapEmbed;
 use phf_set::PhfSet;
@@ -34,6 +35,9 @@ fn test() {
         Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
         Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
         Box::new(MapEmbed::new(&[]).unwrap()) as Box<dyn HashSet>,
+        Box::new(EkphfTbb85::new(&[], 2.0)) as Box<dyn HashSet>,
+        Box::new(EkphfTbb84p::new(&[], 2.0)) as Box<dyn HashSet>,
+        Box::new(EkphfHd8::new(&[], 12)) as Box<dyn HashSet>,
     ];
 
     for n in [100_000, 1_000_000] {
