@@ -1,13 +1,9 @@
 use std::path::PathBuf;
 
 fn main() {
-    let third_party =
-        PathBuf::from("third_party/engineering-k-perfect-hashing");
+    let third_party = PathBuf::from("third_party/engineering-k-perfect-hashing");
     let extlib = third_party.join("extlib");
-    let ribbon_dir = extlib
-        .join("simple-ribbon")
-        .join("extlib")
-        .join("ribbon");
+    let ribbon_dir = extlib.join("simple-ribbon").join("extlib").join("ribbon");
     let ips2ra_include = ribbon_dir.join("ips2ra").join("include");
     let tlx_include = ribbon_dir.join("tlx");
     let ribbon_include = extlib.join("simple-ribbon").join("extlib").join("ribbon");
@@ -17,6 +13,7 @@ fn main() {
         .std("c++23")
         .opt_level(3)
         .flag("-march=native")
+        .flag("-lto")
         .flag("-w") // suppress warnings
         // Disable parallel ips2ra (no TBB dependency)
         .define("IPS2RA_DISABLE_PARALLEL", None)

@@ -4,6 +4,7 @@ fn main() {
         .std("c++17")
         .opt_level(3)
         .flag("-march=native")
+        .flag("-lto")
         .include("third_party/mapembed/CPU/MapEmbed")
         .file("csrc/mapembed_wrapper.cpp")
         .compile("mapembed_wrapper");
