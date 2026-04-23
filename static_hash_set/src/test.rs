@@ -1,6 +1,6 @@
 use super::*;
 use ekphf::{EkphfHd8, EkphfTbb84p, EkphfTbb85};
-use fph_table::{FphDynSet, FphMetaSet};
+use fph_table::FphDynSet;
 use mapembed::MapEmbed;
 use phf_set::PhfSet;
 
