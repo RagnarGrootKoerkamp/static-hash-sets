@@ -56,11 +56,9 @@ const MODES: [&str; 3] = ["loop", "prefetch", "prefetch2"];
 
 fn main() {
     let ns = (0..)
-        .map(|i| (1_000_000. * 1.5f32.powi(i)) as usize)
+        .map(|i| (1_000_000. * 1.4f32.powi(i)) as usize)
         .take_while(|x| *x <= 1_000_000_000)
         .collect::<Vec<_>>();
-    let ns = [8_000_000, 32_000_000, 128_000_000];
-    // let ns = [8_000_000];
 
     let hashers = vec![
         // k-PHF-set
