@@ -42,7 +42,7 @@ const BIN_SIZE: usize = 8;
 type S = wide::i64x4;
 
 const QUERIES: usize = 3_000_000;
-const REPEATS: usize = 3;
+const REPEATS: usize = 1;
 const QUERY_REPEATS: usize = 3;
 #[cfg(all(not(feature = "diffie"), not(feature = "floyd")))]
 const THREADS: [usize; 2] = [1, 12];
