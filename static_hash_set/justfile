@@ -1,7 +1,7 @@
 bench:
     cargo run -r | tee eval/data.csv
 plot:
-    cd eval && python plot.py floyd diffie laptop
+    cd eval && python plot.py laptop diffie floyd
 
 bench_diffie:
     sbatch --partition=diffie --wrap='cargo run -r -F diffie | tee eval/data-diffie.csv'
