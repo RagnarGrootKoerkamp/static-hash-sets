@@ -10,7 +10,7 @@ fn main() {
 
     cc::Build::new()
         .cpp(true)
-        .std("c++23")
+        .std("c++20")
         .opt_level(3)
         .flag("-march=native")
         .flag("-lto")
@@ -33,6 +33,7 @@ fn main() {
         .include(ips2ra_include.join("ips2ra"))
         .include(&tlx_include)
         .include(extlib.join("simple-ribbon").join("extlib").join("xxhash"))
+        .include("../../.spack-env/view/include")
         // SimpleRibbon compiled sources
         .file(
             extlib
