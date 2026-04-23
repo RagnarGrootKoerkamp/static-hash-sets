@@ -1,4 +1,4 @@
-#![allow(incomplete_features)]
+#![allow(incomplete_features, unused)]
 #![feature(
     impl_trait_in_assoc_type,
     widening_mul,
@@ -12,6 +12,7 @@ mod ekphf;
 mod fph_table;
 mod kphf_set;
 mod kphf_trait;
+mod mapembed;
 mod phf_set;
 mod phf_trait;
 #[cfg(test)]
@@ -22,6 +23,7 @@ mod u64_hashset;
 use std::{cell::RefCell, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
+use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
 use fph_table::FphDynSet;
 use kphf::{self, space_lower_bound, KptrHash};
 use kphf_set::KphfSet;
@@ -57,7 +59,8 @@ fn main() {
         .map(|i| (1_000_000. * 1.5f32.powi(i)) as usize)
         .take_while(|x| *x <= 1_000_000_000)
         .collect::<Vec<_>>();
-    // let ns = [10_000_000];
+    let ns = [8_000_000, 32_000_000, 128_000_000];
+    // let ns = [8_000_000];
 
     let hashers = vec![
         // k-PHF-set
@@ -74,7 +77,9 @@ fn main() {
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             // vec![0.7, 0.8, 0.9, 0.99],
             // vec![0.9, 0.99],
-            vec![0.9],
+            // vec![0.9, 0.99],
+            vec![0.7, 0.9, 0.95],
+            // vec![0.9],
         ),
         // PtrHash
         (
@@ -121,6 +126,18 @@ fn main() {
                 Some(Box::new(CuckooSet::<{ Mode::Lazy }>::new(1. / alpha, keys)))
             },
             vec![0.7],
+        ),
+        // engineering k-PHF:
+        // - Only use the Hash-displace variant with faster queries.
+        // - Skip threshold-based-bumping variants
+        (
+            |_alpha: f32, keys: &[T]| {
+                Some(
+                    Box::new(KphfSet::<Hd8Set, BIN_SIZE>::try_new(0.0, 0.0, keys)?)
+                        as Box<dyn HashSet>,
+                )
+            },
+            vec![1.0],
         ),
         // FPH
         (
