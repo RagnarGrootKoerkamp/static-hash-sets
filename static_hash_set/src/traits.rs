@@ -23,8 +23,12 @@ pub trait HashSet: Send + Sync {
 
     fn contains(&self, key: T) -> bool;
 
-    fn prefetch(&self, _key: T) -> usize;
-    fn contains_with_token(&self, key: T, _token: usize) -> bool;
+    fn prefetch(&self, _key: T) -> usize {
+        0
+    }
+    fn contains_with_token(&self, key: T, _token: usize) -> bool {
+        self.contains(key)
+    }
 
     fn count_loop(&self, keys: &[T]) -> usize {
         let mut c = 0;
