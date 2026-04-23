@@ -8,6 +8,7 @@
 )]
 
 mod cuckoo;
+#[cfg(feature = "ekphf")]
 mod ekphf;
 mod fph_table;
 mod kphf_set;
@@ -23,6 +24,7 @@ mod u64_hashset;
 use std::{cell::RefCell, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
+#[cfg(feature = "ekphf")]
 use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
 use fph_table::FphDynSet;
 use kphf::{self, space_lower_bound, KptrHash};
@@ -128,6 +130,7 @@ fn main() {
         // engineering k-PHF:
         // - Only use the Hash-displace variant with faster queries.
         // - Skip threshold-based-bumping variants
+        #[cfg(feature = "ekphf")]
         (
             |_alpha: f32, keys: &[T]| {
                 Some(
