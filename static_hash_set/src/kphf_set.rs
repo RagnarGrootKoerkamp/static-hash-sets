@@ -33,7 +33,11 @@ impl<KPHF, const K: usize> IntoIterator for &KphfSet<KPHF, K> {
 impl<KPHF: Kphf<K>, const K: usize> KphfSet<KPHF, K> {
     pub fn try_new(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
         let kphf = KPHF::try_new(alpha, bits_per_key, keys)?;
-        let table = vec![Bin([0 as T; BIN_SIZE]); kphf.num_bins()].into_boxed_slice();
+        let num_bins = match kphf.num_bins() {
+            usize::MAX => keys.iter().filter(|&&k| k != 0).count().div_ceil(K).max(1),
+            x => x,
+        };
+        let table = vec![Bin([0 as T; BIN_SIZE]); num_bins].into_boxed_slice();
         let mut this = Self {
             alpha,
             bits_per_key,
