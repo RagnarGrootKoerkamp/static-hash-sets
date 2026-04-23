@@ -1,20 +1,21 @@
 //! Map each key to a bucket (cache line) of size k=8 using a non-minimal k-PHF, then check if its there.
 use super::BIN_SIZE;
+use crate::kphf_trait::Kphf;
 use crate::traits::HashSet;
 use crate::u64_hashset::Bin;
 use crate::S;
 use crate::T;
 
-pub struct KphfSet<const MODE: kphf::Mode, const K: usize> {
+pub struct KphfSet<KPHF, const K: usize> {
     pub alpha: f32,
     pub bits_per_key: f32,
     table: Box<[Bin]>,
     len: usize,
     has_zero: bool,
-    kphf: kphf::KptrHash<MODE, K>,
+    kphf: KPHF,
 }
 
-impl<const MODE: kphf::Mode, const K: usize> IntoIterator for &KphfSet<MODE, K> {
+impl<KPHF, const K: usize> IntoIterator for &KphfSet<KPHF, K> {
     type Item = T;
 
     type IntoIter = impl Iterator<Item = T>;
@@ -29,26 +30,9 @@ impl<const MODE: kphf::Mode, const K: usize> IntoIterator for &KphfSet<MODE, K> 
     }
 }
 
-impl<const MODE: kphf::Mode, const K: usize> KphfSet<MODE, K> {
-    pub fn new(alpha: f32, bits_per_key: f32, keys: &[T]) -> Self {
-        let kphf = kphf::KptrHash::<MODE, K>::new::<T>(alpha, bits_per_key, keys).unwrap();
-        let table = vec![Bin([0 as T; BIN_SIZE]); kphf.num_bins()].into_boxed_slice();
-        let mut this = Self {
-            alpha,
-            bits_per_key,
-            table,
-            len: 0,
-            has_zero: false,
-            kphf,
-        };
-        for &k in keys {
-            this.insert(k);
-        }
-        this
-    }
-
+impl<KPHF: Kphf<K>, const K: usize> KphfSet<KPHF, K> {
     pub fn try_new(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
-        let kphf = kphf::KptrHash::<MODE, K>::new::<T>(alpha, bits_per_key, keys)?;
+        let kphf = KPHF::try_new(alpha, bits_per_key, keys)?;
         let table = vec![Bin([0 as T; BIN_SIZE]); kphf.num_bins()].into_boxed_slice();
         let mut this = Self {
             alpha,
@@ -139,20 +123,12 @@ impl<const MODE: kphf::Mode, const K: usize> KphfSet<MODE, K> {
     }
 }
 
-impl<const MODE: kphf::Mode, const K: usize> HashSet for KphfSet<MODE, K> {
+impl<KPHF: Kphf<K> + Send + Sync + 'static, const K: usize> HashSet for KphfSet<KPHF, K> {
     fn name(&self) -> &'static str {
-        match MODE {
-            kphf::Mode::Linear => "KphfSet<Linear>",
-            kphf::Mode::LinearBump => "KphfSet<LinearBump>",
-            kphf::Mode::LinearBumpGreedy => "KphfSet<LinearBumpGreedy>",
-            kphf::Mode::Sort => "KphfSet<Sort>",
-            kphf::Mode::SortBump => "KphfSet<SortBump>",
-            kphf::Mode::SortBumpGreedy => "KphfSet<SortBumpGreedy>",
-        }
+        self.kphf.name()
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = KphfSet::<MODE, K>::new(self.alpha, self.bits_per_key, keys);
-        Box::new(h)
+        Box::new(KphfSet::<KPHF, K>::try_new(self.alpha, self.bits_per_key, keys).unwrap())
     }
     fn allocation_size(&self) -> usize {
         std::mem::size_of_val(&*self.table) + self.kphf.bits_used() / 8

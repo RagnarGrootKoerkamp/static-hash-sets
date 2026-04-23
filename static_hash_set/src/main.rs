@@ -7,11 +7,13 @@
     generic_const_exprs
 )]
 
-pub mod cuckoo;
-pub mod fph_table;
-pub mod kphf_set;
-pub mod phf_set;
-pub mod phf_trait;
+mod cuckoo;
+mod ekphf;
+mod fph_table;
+mod kphf_set;
+mod kphf_trait;
+mod phf_set;
+mod phf_trait;
 #[cfg(test)]
 mod test;
 mod traits;
@@ -21,7 +23,7 @@ use std::{cell::RefCell, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
 use fph_table::FphDynSet;
-use kphf::space_lower_bound;
+use kphf::{self, space_lower_bound, KptrHash};
 use kphf_set::KphfSet;
 use phf_set::PhfSet;
 use rand::seq::IndexedRandom;
@@ -61,13 +63,14 @@ fn main() {
         // k-PHF-set
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                Some(Box::new(
-                    KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
-                        alpha,
-                        1.5 * space_lower_bound(BIN_SIZE, alpha),
-                        keys,
-                    ),
-                ))
+                Some(Box::new(KphfSet::<
+                    KptrHash<{ kphf::Mode::SortBump }, BIN_SIZE>,
+                    BIN_SIZE,
+                >::try_new(
+                    alpha,
+                    1.5 * space_lower_bound(BIN_SIZE, alpha),
+                    keys,
+                )?))
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             // vec![0.7, 0.8, 0.9, 0.99],
             // vec![0.9, 0.99],

@@ -11,26 +11,38 @@ fn test() {
         Box::new(U64HashSet::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::Lazy }>::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::Eager }>::new(1.1, &[])),
-        Box::new(KphfSet::<{ kphf::Mode::SortBump }, BIN_SIZE>::new(
-            0.9,
-            2.0 * space_lower_bound(BIN_SIZE, 0.9),
-            &[],
-        )) as Box<dyn HashSet>,
-        Box::new(KphfSet::<{ kphf::Mode::LinearBump }, BIN_SIZE>::new(
-            0.9,
-            2.0 * space_lower_bound(BIN_SIZE, 0.9),
-            &[],
-        )) as Box<dyn HashSet>,
-        Box::new(KphfSet::<{ kphf::Mode::Linear }, BIN_SIZE>::new(
-            0.9,
-            2.5 * space_lower_bound(BIN_SIZE, 0.9),
-            &[],
-        )) as Box<dyn HashSet>,
-        Box::new(KphfSet::<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>::new(
-            0.9,
-            2.0 * space_lower_bound(BIN_SIZE, 0.9),
-            &[],
-        )) as Box<dyn HashSet>,
+        Box::new(
+            KphfSet::<KptrHash<{ kphf::Mode::SortBump }, BIN_SIZE>, BIN_SIZE>::try_new(
+                0.9,
+                2.0 * space_lower_bound(BIN_SIZE, 0.9),
+                &[],
+            )
+            .unwrap(),
+        ) as Box<dyn HashSet>,
+        Box::new(
+            KphfSet::<KptrHash<{ kphf::Mode::LinearBump }, BIN_SIZE>, BIN_SIZE>::try_new(
+                0.9,
+                2.0 * space_lower_bound(BIN_SIZE, 0.9),
+                &[],
+            )
+            .unwrap(),
+        ) as Box<dyn HashSet>,
+        Box::new(
+            KphfSet::<KptrHash<{ kphf::Mode::Linear }, BIN_SIZE>, BIN_SIZE>::try_new(
+                0.9,
+                2.5 * space_lower_bound(BIN_SIZE, 0.9),
+                &[],
+            )
+            .unwrap(),
+        ) as Box<dyn HashSet>,
+        Box::new(
+            KphfSet::<KptrHash<{ kphf::Mode::SortBumpGreedy }, BIN_SIZE>, BIN_SIZE>::try_new(
+                0.9,
+                2.0 * space_lower_bound(BIN_SIZE, 0.9),
+                &[],
+            )
+            .unwrap(),
+        ) as Box<dyn HashSet>,
         Box::new(FphDynSet::new(0.9, &[]).unwrap()) as Box<dyn HashSet>,
         Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
         Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
