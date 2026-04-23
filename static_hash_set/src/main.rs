@@ -127,33 +127,33 @@ fn main() {
             },
             vec![0.7],
         ),
-        // engineering k-PHF:
-        // - Only use the Hash-displace variant with faster queries.
-        // - Skip threshold-based-bumping variants
-        #[cfg(feature = "ekphf")]
-        (
-            |_alpha: f32, keys: &[T]| {
-                Some(
-                    Box::new(KphfSet::<Hd8Set, BIN_SIZE>::try_new(0.0, 0.0, keys)?)
-                        as Box<dyn HashSet>,
-                )
-            },
-            vec![1.0],
-        ),
         // FPH
         (
             |alpha: f32, keys: &[T]| {
                 Some(Box::new(FphDynSet::new(alpha, keys)?) as Box<dyn HashSet>)
             },
-            vec![0.95],
+            vec![0.90],
         ),
-        // MapEmbed
-        (
-            |_alpha: f32, keys: &[T]| {
-                Some(Box::new(mapembed::MapEmbed::new(keys)?) as Box<dyn HashSet>)
-            },
-            vec![0.9],
-        ),
+        // // engineering k-PHF:
+        // // - Only use the Hash-displace variant with faster queries.
+        // // - Skip threshold-based-bumping variants
+        // #[cfg(feature = "ekphf")]
+        // (
+        //     |_alpha: f32, keys: &[T]| {
+        //         Some(
+        //             Box::new(KphfSet::<Hd8Set, BIN_SIZE>::try_new(0.0, 0.0, keys)?)
+        //                 as Box<dyn HashSet>,
+        //         )
+        //     },
+        //     vec![1.0],
+        // ),
+        // // MapEmbed
+        // (
+        //     |_alpha: f32, keys: &[T]| {
+        //         Some(Box::new(mapembed::MapEmbed::new(keys)?) as Box<dyn HashSet>)
+        //     },
+        //     vec![0.9],
+        // ),
     ];
     for repeat in 0..REPEATS {
         for &n in &ns {
