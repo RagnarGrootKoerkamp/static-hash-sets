@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import seaborn as sns
 import pandas as pd
 import math
@@ -20,17 +21,20 @@ for name in sys.argv[1:]:
             return "PhfSet<PtrHash>"
         if "KptrHash" in h:
             return "kPhfSet<kPtrHash>"
+        if "FxHashSet" in h:
+            return "HashSet"
         return h
 
     data["h"] = data["h"].map(cleanup_name)
     data = data[~(data["h"] == "FphMetaSet")]
     data = data[~(data["h"] == "MapEmbed")]
     data = data[~(data["h"] == "Hd8Set")]
+    data = data[~(data["h"] == "U64HashSet")]
     data = data[~(data["metric"] == "prefetch")]
 
     metric_name = {
         "loop": "for loop",
-        "prefetch2": "loop with prefetch",
+        "prefetch2": "loop with prefetching",
     }
 
     cpu_name = {
@@ -63,17 +67,32 @@ for name in sys.argv[1:]:
     ].min()
 
     label_color = {
-        "FxHashSet": "red",
-        "U64HashSet": "magenta",
+        "HashSet": "red",
         "CuckooSet<Lazy>": "orange",
         "CuckooSet<Eager>": "brown",
         "FphDynSet": "pink",
         "PhfSet<PHast+>": "lime",
         "PhfSet<PtrHash>": "cyan",
         "kPhfSet<kPtrHash>": "blue",
+        # "U64HashSet": "magenta",
         # "Hd8Set": "black",
         # "MapEmbed": "brown",
     }
+
+    display_name = {
+        "FphDynSet": "FPH",
+        "PhfSet<PHast+>": "PHF-set<PHast+>",
+        "PhfSet<PtrHash>": "PHF-set<PtrHash>",
+        "kPhfSet<kPtrHash>": "$k$-PHF-set<$k$-PtrHash>",
+        # "U64HashSet": "magenta",
+        # "Hd8Set": "black",
+        # "MapEmbed": "brown",
+    }
+
+    def get_display_name(h):
+        if h in display_name:
+            return display_name[h]
+        return h
 
     def width(name, alpha):
         if name != "kPhfSet<kPtrHash>":
@@ -144,7 +163,7 @@ for name in sys.argv[1:]:
                         errorbar=None,
                         color=label_color[h],
                         lw=width(h, alpha),
-                        label=h
+                        label=get_display_name(h)
                         + (
                             f" ($\\alpha={alpha}$)"
                             if alpha != 0.5
@@ -187,7 +206,7 @@ for name in sys.argv[1:]:
                             errorbar=None,
                             color=label_color[h],
                             lw=width(h, alpha),
-                            label=h
+                            label=get_display_name(h)
                             + (
                                 f" ($\\alpha={alpha}$)"
                                 if alpha != 0.5
@@ -209,14 +228,25 @@ for name in sys.argv[1:]:
                     ax.legend().remove() if ax.get_legend() else None
 
         handles, labels = axes[0][0].get_legend_handles_labels()
-        fig.legend(
-            handles,
-            labels,
+        col_titles = ["Probing", "1-PHF-set", "$k$-PHF-set"]
+        new_handles, new_labels = [], []
+        for i, (h, l) in enumerate(zip(handles, labels)):
+            if i % 3 == 0:
+                new_handles.append(mpatches.Patch(visible=False))
+                new_labels.append(col_titles[i // 3])
+            new_handles.append(h)
+            new_labels.append(l)
+        leg = fig.legend(
+            new_handles,
+            new_labels,
             loc="lower center",
             ncols=3,
             fontsize=10,
             bbox_to_anchor=(0.5, -0.03) if mode == "single" else (0.5, -0.02),
         )
+        for i, text in enumerate(leg.get_texts()):
+            if i % 4 == 0:
+                text.set_fontweight("bold")
 
         if mode == "single":
             fig.suptitle(
