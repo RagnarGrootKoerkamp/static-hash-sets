@@ -58,7 +58,7 @@ const MODES: [&str; 3] = ["loop", "prefetch", "prefetch2"];
 
 fn main() {
     let ns = (0..)
-        .map(|i| (1_000_000. * 1.4f32.powi(i)) as usize)
+        .map(|i| (1_000_000. * 1.2f32.powi(i)) as usize)
         .take_while(|x| *x <= 1_000_000_000)
         .collect::<Vec<_>>();
 
@@ -104,12 +104,12 @@ fn main() {
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![0.5],
         ),
-        // U64HashSet
-        (
-            |alpha: f32, keys: &[T]| Some(Box::new(U64HashSet::new(1. / alpha, keys))),
-            // vec![0.7, 0.8, 0.9, 0.95],
-            vec![0.7],
-        ),
+        // // U64HashSet
+        // (
+        //     |alpha: f32, keys: &[T]| Some(Box::new(U64HashSet::new(1. / alpha, keys))),
+        //     // vec![0.7, 0.8, 0.9, 0.95],
+        //     vec![0.7],
+        // ),
         // Eager Cuckoo
         (
             |alpha: f32, keys: &[T]| {
