@@ -53,7 +53,7 @@ impl<PHF: Phf> PhfSet<PHF> {
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.len + self.has_zero as usize
+        self.len
     }
 
     #[inline(always)]

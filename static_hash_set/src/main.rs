@@ -132,7 +132,7 @@ fn main() {
             |alpha: f32, keys: &[T]| {
                 Some(Box::new(FphDynSet::new(alpha, keys)?) as Box<dyn HashSet>)
             },
-            vec![0.90],
+            vec![0.95],
         ),
         // // engineering k-PHF:
         // // - Only use the Hash-displace variant with faster queries.

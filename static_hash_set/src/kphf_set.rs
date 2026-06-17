@@ -6,6 +6,7 @@ use crate::u64_hashset::Bin;
 use crate::S;
 use crate::T;
 
+#[derive(Clone)]
 pub struct KphfSet<KPHF, const K: usize> {
     pub alpha: f32,
     pub bits_per_key: f32,
@@ -54,7 +55,7 @@ impl<KPHF: Kphf<K>, const K: usize> KphfSet<KPHF, K> {
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.len + self.has_zero as usize
+        self.len
     }
 
     #[inline(always)]

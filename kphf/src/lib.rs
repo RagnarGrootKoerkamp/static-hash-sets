@@ -3,7 +3,7 @@
 
 use std::{
     fmt::Debug,
-    hash::{Hash, Hasher},
+    hash::{BuildHasher, Hash, Hasher},
     hint::cold_path,
 };
 use sux::{traits::BitVecOpsMut, utils::prefetch_index};
@@ -50,7 +50,8 @@ impl Key for u64 {
     }
 }
 
-pub struct KptrHash<const MODE: Mode, const K: usize> {
+#[derive(Clone)]
+pub struct KptrHash<const MODE: Mode = { Mode::SortBump }, const K: usize = 8> {
     /// Fill ratio
     pub alpha: f32,
     /// Bits per key
@@ -460,7 +461,8 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
     fn hash_key<T: Key>(&self, key: T) -> u64 {
         // let mut hasher = fxhash::FxHasher::default();
         // let mut hasher = wyhash::WyHash::default();
-        let mut hasher = gxhash::GxHasher::default();
+        // let mut hasher = gxhash::GxHasher::default();
+        let mut hasher = rapidhash::fast::SeedableState::fixed().build_hasher();
 
         (key.as_u64() ^ self.salt).hash(&mut hasher);
         hasher.finish()
