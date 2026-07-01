@@ -1,10 +1,5 @@
 //! Map each key to a bucket (cache line) of size k=8 using a non-minimal k-PHF, then check if its there.
-use super::BIN_SIZE;
-use crate::kphf_trait::Kphf;
-use crate::traits::HashSet;
-use crate::u64_hashset::Bin;
-use crate::S;
-use crate::T;
+use crate::{kphf_trait::Kphf, Bin, HashSet, BIN_SIZE, S, T};
 
 #[derive(Clone)]
 pub struct KphfSet<KPHF, const K: usize> {

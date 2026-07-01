@@ -9,7 +9,7 @@ use std::hash::{BuildHasher, BuildHasherDefault};
 
 use super::BIN_SIZE;
 use crate::traits::HashSet;
-use crate::u64_hashset::Bin;
+use crate::Bin;
 use crate::S;
 use crate::T;
 

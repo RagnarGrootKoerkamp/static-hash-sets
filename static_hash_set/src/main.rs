@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+mod bin;
 mod cuckoo;
 #[cfg(feature = "ekphf")]
 mod ekphf;
@@ -33,6 +34,7 @@ use u64_hashset::U64HashSet;
 type T = u64;
 const BIN_SIZE: usize = 8;
 type S = wide::i64x4;
+use bin::Bin;
 
 const QUERIES: usize = 3_000_000;
 const REPEATS: usize = 1;
