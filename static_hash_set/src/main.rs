@@ -8,6 +8,7 @@ mod fph_table;
 mod kphf_set;
 mod kphf_trait;
 mod mapembed;
+mod mock_hashset;
 mod phf_set;
 mod phf_trait;
 #[cfg(test)]
@@ -23,6 +24,7 @@ use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
 use fph_table::FphDynSet;
 use kphf::{self, space_lower_bound, KptrHash};
 use kphf_set::KphfSet;
+use mock_hashset::MockHashSet;
 use phf_set::PhfSet;
 use rand::seq::IndexedRandom;
 use traits::HashSet;
@@ -58,100 +60,107 @@ fn main() {
         .collect::<Vec<_>>();
 
     let hashers = vec![
-        // k-PHF-set
+        // Mock throughput hashset
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                Some(Box::new(KphfSet::<
-                    KptrHash<{ kphf::Mode::SortBump as u8 }, BIN_SIZE>,
-                    BIN_SIZE,
-                >::try_new(
-                    alpha,
-                    1.5 * space_lower_bound(BIN_SIZE, alpha),
-                    keys,
-                )?))
+                Some(Box::new(MockHashSet::new(1.0 / alpha, keys)))
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
-            // vec![0.7, 0.8, 0.9, 0.99],
-            // vec![0.9, 0.99],
-            // vec![0.9, 0.99],
-            vec![0.7, 0.9, 0.95],
-            // vec![0.9],
+            vec![1.0],
         ),
-        // PtrHash
-        (
-            |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                Some(Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
-            } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
-            vec![0.99],
-        ),
-        // non-minimal PHast
-        (
-            |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                Some(Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
-            } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
-            vec![0.98],
-        ),
-        // SwissTable
-        (
-            |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                Some(Box::new(
-                    hashbrown::HashSet::<T, gxhash::GxBuildHasher>::from_iter(keys.iter().cloned()),
-                ))
-            } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
-            vec![0.5],
-        ),
-        // // U64HashSet
+        // k-PHF-set
         // (
-        //     |alpha: f32, keys: &[T]| Some(Box::new(U64HashSet::new(1. / alpha, keys))),
-        //     // vec![0.7, 0.8, 0.9, 0.95],
+        //     |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+        //         Some(Box::new(KphfSet::<
+        //             KptrHash<{ kphf::Mode::SortBump as u8 }, BIN_SIZE>,
+        //             BIN_SIZE,
+        //         >::try_new(
+        //             alpha,
+        //             1.5 * space_lower_bound(BIN_SIZE, alpha),
+        //             keys,
+        //         )?))
+        //     } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+        //     // vec![0.7, 0.8, 0.9, 0.99],
+        //     // vec![0.9, 0.99],
+        //     // vec![0.9, 0.99],
+        //     vec![0.7, 0.9, 0.95],
+        //     // vec![0.9],
+        // ),
+        // // PtrHash
+        // (
+        //     |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+        //         Some(Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
+        //     } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+        //     vec![0.99],
+        // ),
+        // // non-minimal PHast
+        // (
+        //     |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+        //         Some(Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
+        //     } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+        //     vec![0.98],
+        // ),
+        // // SwissTable
+        // (
+        //     |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+        //         Some(Box::new(
+        //             hashbrown::HashSet::<T, gxhash::GxBuildHasher>::from_iter(keys.iter().cloned()),
+        //         ))
+        //     } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
+        //     vec![0.5],
+        // ),
+        // // // U64HashSet
+        // // (
+        // //     |alpha: f32, keys: &[T]| Some(Box::new(U64HashSet::new(1. / alpha, keys))),
+        // //     // vec![0.7, 0.8, 0.9, 0.95],
+        // //     vec![0.7],
+        // // ),
+        // // Eager Cuckoo
+        // (
+        //     |alpha: f32, keys: &[T]| {
+        //         Some(Box::new(CuckooSet::<{ Mode::Eager as u8 }>::new(
+        //             1. / alpha,
+        //             keys,
+        //         )))
+        //     },
+        //     vec![0.99],
+        // ),
+        // // Lazy Cuckoo
+        // (
+        //     |alpha: f32, keys: &[T]| {
+        //         Some(Box::new(CuckooSet::<{ Mode::Lazy as u8 }>::new(
+        //             1. / alpha,
+        //             keys,
+        //         )))
+        //     },
         //     vec![0.7],
         // ),
-        // Eager Cuckoo
-        (
-            |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooSet::<{ Mode::Eager as u8 }>::new(
-                    1. / alpha,
-                    keys,
-                )))
-            },
-            vec![0.99],
-        ),
-        // Lazy Cuckoo
-        (
-            |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooSet::<{ Mode::Lazy as u8 }>::new(
-                    1. / alpha,
-                    keys,
-                )))
-            },
-            vec![0.7],
-        ),
-        // FPH
-        (
-            |alpha: f32, keys: &[T]| {
-                Some(Box::new(FphDynSet::new(alpha, keys)?) as Box<dyn HashSet>)
-            },
-            vec![0.95],
-        ),
-        // // engineering k-PHF:
-        // // - Only use the Hash-displace variant with faster queries.
-        // // - Skip threshold-based-bumping variants
-        // #[cfg(feature = "ekphf")]
+        // // FPH
         // (
-        //     |_alpha: f32, keys: &[T]| {
-        //         Some(
-        //             Box::new(KphfSet::<Hd8Set, BIN_SIZE>::try_new(0.0, 0.0, keys)?)
-        //                 as Box<dyn HashSet>,
-        //         )
+        //     |alpha: f32, keys: &[T]| {
+        //         Some(Box::new(FphDynSet::new(alpha, keys)?) as Box<dyn HashSet>)
         //     },
-        //     vec![1.0],
+        //     vec![0.95],
         // ),
-        // // MapEmbed
-        // (
-        //     |_alpha: f32, keys: &[T]| {
-        //         Some(Box::new(mapembed::MapEmbed::new(keys)?) as Box<dyn HashSet>)
-        //     },
-        //     vec![0.9],
-        // ),
+        // // // engineering k-PHF:
+        // // // - Only use the Hash-displace variant with faster queries.
+        // // // - Skip threshold-based-bumping variants
+        // // #[cfg(feature = "ekphf")]
+        // // (
+        // //     |_alpha: f32, keys: &[T]| {
+        // //         Some(
+        // //             Box::new(KphfSet::<Hd8Set, BIN_SIZE>::try_new(0.0, 0.0, keys)?)
+        // //                 as Box<dyn HashSet>,
+        // //         )
+        // //     },
+        // //     vec![1.0],
+        // // ),
+        // // // MapEmbed
+        // // (
+        // //     |_alpha: f32, keys: &[T]| {
+        // //         Some(Box::new(mapembed::MapEmbed::new(keys)?) as Box<dyn HashSet>)
+        // //     },
+        // //     vec![0.9],
+        // // ),
     ];
     for repeat in 0..REPEATS {
         for &n in &ns {

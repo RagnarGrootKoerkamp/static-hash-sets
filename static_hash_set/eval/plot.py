@@ -74,6 +74,7 @@ for name in sys.argv[1:]:
         "PhfSet<PHast+>": "lime",
         "PhfSet<PtrHash>": "cyan",
         "kPhfSet<kPtrHash>": "blue",
+        "MockHashSet": "black",
         # "U64HashSet": "magenta",
         # "Hd8Set": "black",
         # "MapEmbed": "brown",
@@ -228,7 +229,7 @@ for name in sys.argv[1:]:
                     ax.legend().remove() if ax.get_legend() else None
 
         handles, labels = axes[0][0].get_legend_handles_labels()
-        col_titles = ["Probing", "1-PHF-set", "$k$-PHF-set"]
+        col_titles = ["Probing", "1-PHF-set", "$k$-PHF-set", "Lower bound"]
         new_handles, new_labels = [], []
         for i, (h, l) in enumerate(zip(handles, labels)):
             if i % 3 == 0:
@@ -236,11 +237,14 @@ for name in sys.argv[1:]:
                 new_labels.append(col_titles[i // 3])
             new_handles.append(h)
             new_labels.append(l)
+        while len(new_handles) % 4 != 0:
+            new_handles.append(mpatches.Patch(visible=False))
+            new_labels.append("")
         leg = fig.legend(
             new_handles,
             new_labels,
             loc="lower center",
-            ncols=3,
+            ncols=len(col_titles),
             fontsize=10,
             bbox_to_anchor=(0.5, -0.03) if mode == "single" else (0.5, -0.02),
         )
