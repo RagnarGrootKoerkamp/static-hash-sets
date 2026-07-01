@@ -8,6 +8,9 @@ diffie = []
 floyd = []
 ekphf = ["dep:engineering-kphf"]
 
+# Enable external hash set implemenations in the library.
+ext = []
+
 [dependencies]
 cuckoofilter = "0.5.0"
 fastbloom = "0.14.0"
