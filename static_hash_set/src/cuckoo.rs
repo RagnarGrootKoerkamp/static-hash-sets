@@ -15,13 +15,24 @@ use crate::T;
 
 type Hasher = BuildHasherDefault<gxhash::GxHasher>;
 
-#[derive(PartialEq, Eq, Debug, std::marker::ConstParamTy)]
+#[derive(PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum Mode {
-    Eager,
-    Lazy,
+    Eager = 0,
+    Lazy = 1,
 }
 
-pub struct CuckooSet<const MODE: Mode> {
+impl Mode {
+    pub const fn from(value: u8) -> Self {
+        match value {
+            0 => Mode::Eager,
+            1 => Mode::Lazy,
+            _ => panic!(),
+        }
+    }
+}
+
+pub struct CuckooSet<const MODE: u8> {
     pub slot_ratio: f32,
     num_bins: usize,
     table: Box<[Bin]>,
@@ -29,22 +40,7 @@ pub struct CuckooSet<const MODE: Mode> {
     has_zero: bool,
 }
 
-impl<const MODE: Mode> IntoIterator for &CuckooSet<MODE> {
-    type Item = T;
-
-    type IntoIter = impl Iterator<Item = T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        std::iter::repeat_n(0, self.has_zero as usize).chain(
-            self.table
-                .iter()
-                .flat_map(|b| b.0.iter().copied())
-                .filter(|x| *x != 0),
-        )
-    }
-}
-
-impl<const MODE: Mode> CuckooSet<MODE> {
+impl<const MODE: u8> CuckooSet<MODE> {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
         for &k in keys {
@@ -78,14 +74,14 @@ impl<const MODE: Mode> CuckooSet<MODE> {
     #[inline(always)]
     fn bin_idx_1(&self, key: T) -> usize {
         let hash64 = Hasher::default().hash_one(key);
-        (hash64 as usize).widening_mul(self.num_bins).1
+        (((hash64 as u128) * (self.num_bins as u128)) >> 64) as usize
     }
 
     #[inline(always)]
     fn bin_idx_2(&self, key: T) -> usize {
         const XOR: u64 = 0x9e3779b97f4a7c15;
         let hash64 = Hasher::default().hash_one(key ^ XOR);
-        (hash64 as usize).widening_mul(self.num_bins).1
+        (((hash64 as u128) * (self.num_bins as u128)) >> 64) as usize
     }
 
     #[inline(always)]
@@ -113,7 +109,7 @@ impl<const MODE: Mode> CuckooSet<MODE> {
     }
     #[inline(always)]
     pub fn prefetch(&self, key: T) -> usize {
-        match MODE {
+        match Mode::from(MODE) {
             Mode::Eager => self.prefetch_both(key),
             Mode::Lazy => self.prefetch_first(key),
         }
@@ -151,7 +147,7 @@ impl<const MODE: Mode> CuckooSet<MODE> {
 
     #[inline(always)]
     pub fn contains(&self, key: T) -> bool {
-        match MODE {
+        match Mode::from(MODE) {
             Mode::Eager => self.contains_eager(key),
             Mode::Lazy => self.contains_lazy(key),
         }
@@ -191,7 +187,7 @@ impl<const MODE: Mode> CuckooSet<MODE> {
 
     #[inline(always)]
     pub fn contains_with_token(&self, key: T, token: usize) -> bool {
-        match MODE {
+        match Mode::from(MODE) {
             Mode::Eager => self.contains_eager_with_token(key, token),
             Mode::Lazy => self.contains_lazy_with_token(key, token),
         }
@@ -232,19 +228,29 @@ impl<const MODE: Mode> CuckooSet<MODE> {
         let bump_idx = rand::random_range(0..BIN_SIZE);
         let key = std::mem::replace(&mut bin.0[bump_idx], key);
         let idx = self.bin_idx_1(key) ^ self.bin_idx_2(key) ^ idx;
-        become self.insert_to_bin(key, idx);
+        // Fingers crossed that this becomes a non-recursive tail call.
+        self.insert_to_bin(key, idx);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        std::iter::repeat_n(0, self.has_zero as usize).chain(
+            self.table
+                .iter()
+                .flat_map(|b| b.0.iter().copied())
+                .filter(|x| *x != 0),
+        )
     }
 
     pub fn test(&self) {
-        for x in self {
+        for x in self.iter() {
             assert!(self.contains_eager(x));
         }
     }
 }
 
-impl<const MODE: Mode> HashSet for CuckooSet<MODE> {
+impl<const MODE: u8> HashSet for CuckooSet<MODE> {
     fn name(&self) -> &'static str {
-        match MODE {
+        match Mode::from(MODE) {
             Mode::Eager => "CuckooSet<Eager>",
             Mode::Lazy => "CuckooSet<Lazy>",
         }

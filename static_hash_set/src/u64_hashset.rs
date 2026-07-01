@@ -25,21 +25,6 @@ pub struct U64HashSet {
 
 const PADDING: usize = 1000;
 
-impl IntoIterator for &U64HashSet {
-    type Item = T;
-
-    type IntoIter = impl Iterator<Item = T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        std::iter::repeat_n(0, self.has_zero as usize).chain(
-            self.table
-                .iter()
-                .flat_map(|b| b.0.iter().copied())
-                .filter(|x| *x != 0),
-        )
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(align(64))] // Cache line alignment
 pub(crate) struct Bin(pub [T; BIN_SIZE]);
@@ -109,7 +94,7 @@ impl U64HashSet {
     #[inline(always)]
     fn bin_idx(&self, key: T) -> usize {
         let hash64 = Hasher::default().hash_one(key);
-        (hash64 as usize).widening_mul(self.num_bins).1
+        (((hash64 as u128) * (self.num_bins as u128)) >> 64) as usize
     }
 
     #[inline(always)]
@@ -195,8 +180,17 @@ impl U64HashSet {
         }
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = T> {
+        std::iter::repeat_n(0, self.has_zero as usize).chain(
+            self.table
+                .iter()
+                .flat_map(|b| b.0.iter().copied())
+                .filter(|x| *x != 0),
+        )
+    }
+
     pub fn test(&self) {
-        for x in self {
+        for x in self.iter() {
             assert!(self.contains(x));
         }
     }

@@ -14,17 +14,6 @@ pub struct PhfSet<PHF: Phf> {
     phf: PHF,
 }
 
-impl<PHF: Phf> IntoIterator for &PhfSet<PHF> {
-    type Item = T;
-
-    type IntoIter = impl Iterator<Item = T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        std::iter::repeat_n(0, self.has_zero as usize)
-            .chain(self.table.iter().copied().filter(|x| *x != 0))
-    }
-}
-
 impl<PHF: Phf> PhfSet<PHF> {
     pub fn new(_alpha: f32, _bits_per_key: f32, keys: &[T]) -> Self {
         let phf = PHF::new(keys);
@@ -113,8 +102,13 @@ impl<PHF: Phf> PhfSet<PHF> {
         self.len += 1;
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        std::iter::repeat_n(0, self.has_zero as usize)
+            .chain(self.table.iter().copied().filter(|x| *x != 0))
+    }
+
     pub fn test(&self) {
-        for x in self {
+        for x in self.iter() {
             assert!(self.contains(x));
         }
     }

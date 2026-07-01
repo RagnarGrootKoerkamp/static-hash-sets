@@ -1,6 +1,3 @@
-#![allow(incomplete_features)]
-#![feature(widening_mul, adt_const_params, generic_const_exprs)]
-
 use std::{
     fmt::Debug,
     hash::{BuildHasher, Hash, Hasher},
@@ -18,8 +15,10 @@ pub trait KphfT {
     fn get(&mut self, key: u32) -> usize;
 }
 
+/// Take two u64 values and returh the high half of the multiplication.
+/// Equivalent to a*b when considered as fractional values out of 2^64.
 fn mul(a: u64, b: u64) -> u64 {
-    a.widening_mul(b).1
+    ((a as u128) * (b as u128) >> 64) as u64
 }
 
 pub trait Key:
@@ -51,7 +50,7 @@ impl Key for u64 {
 }
 
 #[derive(Clone)]
-pub struct KptrHash<const MODE: Mode = { Mode::SortBump }, const K: usize = 8> {
+pub struct KptrHash<const MODE: u8 = { Mode::SortBump as u8 }, const K: usize = 8> {
     /// Fill ratio
     pub alpha: f32,
     /// Bits per key
@@ -72,20 +71,36 @@ pub struct KptrHash<const MODE: Mode = { Mode::SortBump }, const K: usize = 8> {
 
 const PADDING: usize = 1 << 7;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, std::marker::ConstParamTy)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[repr(u8)]
 pub enum Mode {
     /// Process buckets left to right
-    Linear,
+    Linear = 0,
     /// Process buckets left to right, and allow bumping
-    LinearBump,
+    LinearBump = 1,
     /// Process buckets left to right, and allow bumping. Always take first working seed.
-    LinearBumpGreedy,
+    LinearBumpGreedy = 2,
     /// Process buckets large to small
-    Sort,
+    Sort = 3,
     /// Process buckets large to small, and allow bumping
-    SortBump,
+    #[default]
+    SortBump = 4,
     /// Process buckets large to small, and allow bumping. Always take first working seed.
-    SortBumpGreedy,
+    SortBumpGreedy = 5,
+}
+
+impl Mode {
+    pub const fn from(value: u8) -> Self {
+        match value {
+            0 => Mode::Linear,
+            1 => Mode::LinearBump,
+            2 => Mode::LinearBumpGreedy,
+            3 => Mode::Sort,
+            4 => Mode::SortBump,
+            5 => Mode::SortBumpGreedy,
+            _ => panic!(),
+        }
+    }
 }
 
 /// Information-theoretic lower bound on bits/key for a static hash function
@@ -121,7 +136,7 @@ pub fn space_lower_bound(k: usize, alpha: f32) -> f32 {
 
 const SEED_MASK: u64 = 0b0111_1111;
 
-impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
+impl<const MODE: u8, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
     fn to_bucket(&self, hash: u64) -> usize {
         let x = hash;
@@ -129,14 +144,14 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
         let four = mul(sq, sq);
         // add an epsilon to avoid too large buckets?
         // let four = four + ((x - four) >> 4);
-        four.widening_mul(self.num_buckets as u64).1 as usize
+        mul(four, self.num_buckets as u64) as usize
     }
 
     #[inline(always)]
     fn to_bin(&self, hash: u64, seed: u64) -> usize {
         pub const C: u64 = 0x517cc1b727220a95;
         let y = (hash ^ (seed >> 7)).wrapping_mul(C);
-        (y.widening_mul((self.num_bins - PADDING) as u64).1 + (seed & SEED_MASK)) as usize
+        (mul(y, (self.num_bins - PADDING) as u64) + (seed & SEED_MASK)) as usize
     }
 
     pub fn new<T: Key>(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
@@ -165,12 +180,13 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
     fn build<T: Key>(&mut self, keys: &[T]) -> Option<()> {
         let start = std::time::Instant::now();
-        let sort = matches!(MODE, Mode::Sort | Mode::SortBump | Mode::SortBumpGreedy);
+        let mode = Mode::from(MODE);
+        let sort = matches!(mode, Mode::Sort | Mode::SortBump | Mode::SortBumpGreedy);
         let bump = matches!(
-            MODE,
+            mode,
             Mode::LinearBump | Mode::SortBump | Mode::LinearBumpGreedy | Mode::SortBumpGreedy
         );
-        let greedy = matches!(MODE, Mode::LinearBumpGreedy | Mode::SortBumpGreedy);
+        let greedy = matches!(mode, Mode::LinearBumpGreedy | Mode::SortBumpGreedy);
 
         let n = self.n;
 
@@ -480,8 +496,9 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 
         let bi = self.to_bucket(x);
         let seed = unsafe { *self.seeds.get_unchecked(bi) as u64 };
+        let mode = Mode::from(MODE);
         if matches!(
-            MODE,
+            mode,
             Mode::LinearBump | Mode::SortBump | Mode::LinearBumpGreedy | Mode::SortBumpGreedy
         ) && seed == 0
         {
@@ -496,10 +513,7 @@ impl<const MODE: Mode, const K: usize> KptrHash<MODE, K> {
 #[cfg(test)]
 mod test {
     use super::*;
-    fn test_config<const MODE: Mode, const K: usize>(keys: &[u32], alpha: f32, bits_per_key: f32)
-    where
-        [(); K + 1]:,
-    {
+    fn test_config<const MODE: u8, const K: usize>(keys: &[u32], alpha: f32, bits_per_key: f32) {
         let Some(kphf) = KptrHash::<MODE, K>::new(alpha, bits_per_key, keys) else {
             return;
         };
@@ -518,10 +532,10 @@ mod test {
 
         for alpha in [0.90] {
             for bits_per_key in [0.40, 0.35, 0.3, 0.25] {
-                test_config::<{ Mode::Linear }, 8>(&keys, alpha, bits_per_key);
-                test_config::<{ Mode::LinearBump }, 8>(&keys, alpha, bits_per_key);
-                test_config::<{ Mode::Sort }, 8>(&keys, alpha, bits_per_key);
-                test_config::<{ Mode::SortBump }, 8>(&keys, alpha, bits_per_key);
+                test_config::<{ Mode::Linear as u8 }, 8>(&keys, alpha, bits_per_key);
+                test_config::<{ Mode::LinearBump as u8 }, 8>(&keys, alpha, bits_per_key);
+                test_config::<{ Mode::Sort as u8 }, 8>(&keys, alpha, bits_per_key);
+                test_config::<{ Mode::SortBump as u8 }, 8>(&keys, alpha, bits_per_key);
             }
         }
     }

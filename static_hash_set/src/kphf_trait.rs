@@ -1,5 +1,4 @@
 use super::T;
-use kphf::space_lower_bound;
 
 pub trait Kphf<const K: usize>: Sized {
     fn name(&self) -> &'static str;
@@ -13,9 +12,9 @@ pub trait Kphf<const K: usize>: Sized {
     fn num_bumped(&self) -> usize;
 }
 
-impl<const MODE: kphf::Mode, const K: usize> Kphf<K> for kphf::KptrHash<MODE, K> {
+impl<const MODE: u8, const K: usize> Kphf<K> for kphf::KptrHash<MODE, K> {
     fn name(&self) -> &'static str {
-        match MODE {
+        match kphf::Mode::from(MODE) {
             kphf::Mode::Linear => "KptrHash<Linear>",
             kphf::Mode::LinearBump => "KptrHash<LinearBump>",
             kphf::Mode::LinearBumpGreedy => "KptrHash<LinearBumpGreedy>",

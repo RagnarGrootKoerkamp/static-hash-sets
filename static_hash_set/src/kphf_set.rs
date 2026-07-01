@@ -16,21 +16,6 @@ pub struct KphfSet<KPHF, const K: usize> {
     kphf: KPHF,
 }
 
-impl<KPHF, const K: usize> IntoIterator for &KphfSet<KPHF, K> {
-    type Item = T;
-
-    type IntoIter = impl Iterator<Item = T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        std::iter::repeat_n(0, self.has_zero as usize).chain(
-            self.table
-                .iter()
-                .flat_map(|b| b.0.iter().copied())
-                .filter(|x| *x != 0),
-        )
-    }
-}
-
 impl<KPHF: Kphf<K>, const K: usize> KphfSet<KPHF, K> {
     pub fn try_new(alpha: f32, bits_per_key: f32, keys: &[T]) -> Option<Self> {
         let kphf = KPHF::try_new(alpha, bits_per_key, keys)?;
@@ -121,8 +106,17 @@ impl<KPHF: Kphf<K>, const K: usize> KphfSet<KPHF, K> {
         self.len += 1;
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = T> {
+        std::iter::repeat_n(0, self.has_zero as usize).chain(
+            self.table
+                .iter()
+                .flat_map(|b| b.0.iter().copied())
+                .filter(|x| *x != 0),
+        )
+    }
+
     pub fn test(&self) {
-        for x in self {
+        for x in self.iter() {
             assert!(self.contains(x));
         }
     }

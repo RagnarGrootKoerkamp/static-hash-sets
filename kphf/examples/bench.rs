@@ -1,5 +1,3 @@
-#![allow(incomplete_features)]
-#![feature(adt_const_params, generic_const_exprs)]
 use std::cell::RefCell;
 
 use kphf::{space_lower_bound, KptrHash, Mode};
@@ -54,10 +52,7 @@ const QUERY: bool = true;
 // const FACTORS: [f32; 2] = [1.5, 1.8];
 // const QUERY: bool = false;
 
-fn bench<const MODE: Mode, const K: usize>()
-where
-    [(); K + 1]:,
-{
+fn bench<const MODE: u8, const K: usize>() {
     for &n in &NS {
         let keys = std::array::from_fn::<_, REPEATS, _>(|_| gen_keys(n));
         for &alpha in &ALPHAS {
@@ -124,12 +119,12 @@ where
 }
 
 fn main() {
-    bench::<{ Mode::SortBumpGreedy }, 4>();
-    bench::<{ Mode::SortBump }, 4>();
+    bench::<{ Mode::SortBumpGreedy as u8 }, 4>();
+    bench::<{ Mode::SortBump as u8 }, 4>();
 
-    bench::<{ Mode::SortBumpGreedy }, 8>();
-    bench::<{ Mode::SortBump }, 8>();
+    bench::<{ Mode::SortBumpGreedy as u8 }, 8>();
+    bench::<{ Mode::SortBump as u8 }, 8>();
 
-    bench::<{ Mode::SortBumpGreedy }, 16>();
-    bench::<{ Mode::SortBump }, 16>();
+    bench::<{ Mode::SortBumpGreedy as u8 }, 16>();
+    bench::<{ Mode::SortBump as u8 }, 16>();
 }

@@ -1,11 +1,4 @@
-#![allow(incomplete_features, unused)]
-#![feature(
-    impl_trait_in_assoc_type,
-    widening_mul,
-    explicit_tail_calls,
-    adt_const_params,
-    generic_const_exprs
-)]
+#![allow(unused)]
 
 mod cuckoo;
 #[cfg(feature = "ekphf")]
@@ -67,7 +60,7 @@ fn main() {
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 Some(Box::new(KphfSet::<
-                    KptrHash<{ kphf::Mode::SortBump }, BIN_SIZE>,
+                    KptrHash<{ kphf::Mode::SortBump as u8 }, BIN_SIZE>,
                     BIN_SIZE,
                 >::try_new(
                     alpha,
@@ -113,7 +106,7 @@ fn main() {
         // Eager Cuckoo
         (
             |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooSet::<{ Mode::Eager }>::new(
+                Some(Box::new(CuckooSet::<{ Mode::Eager as u8 }>::new(
                     1. / alpha,
                     keys,
                 )))
@@ -123,7 +116,10 @@ fn main() {
         // Lazy Cuckoo
         (
             |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooSet::<{ Mode::Lazy }>::new(1. / alpha, keys)))
+                Some(Box::new(CuckooSet::<{ Mode::Lazy as u8 }>::new(
+                    1. / alpha,
+                    keys,
+                )))
             },
             vec![0.7],
         ),
