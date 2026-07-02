@@ -2,11 +2,13 @@
 
 mod bin;
 mod cuckoo;
-#[cfg(feature = "ekphf")]
+#[cfg(feature = "extc")]
 mod ekphf;
+#[cfg(feature = "extc")]
 mod fph_table;
 mod kphf_set;
 mod kphf_trait;
+#[cfg(feature = "extc")]
 mod mapembed;
 mod mock_hashset;
 mod phf_set;
@@ -19,8 +21,9 @@ mod u64_hashset;
 use std::{cell::RefCell, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
-#[cfg(feature = "ekphf")]
+#[cfg(feature = "extc")]
 use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
+#[cfg(feature = "extc")]
 use fph_table::FphDynSet;
 use kphf::{self, space_lower_bound, KptrHash};
 use kphf_set::KphfSet;

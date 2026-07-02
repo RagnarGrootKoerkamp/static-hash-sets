@@ -1,7 +1,9 @@
 use super::*;
-#[cfg(feature = "ekphf")]
+#[cfg(feature = "extc")]
 use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
+#[cfg(feature = "extc")]
 use fph_table::FphDynSet;
+#[cfg(feature = "extc")]
 use mapembed::MapEmbed;
 use phf_set::PhfSet;
 
@@ -44,15 +46,15 @@ fn test() {
             )
             .unwrap(),
         ) as Box<dyn HashSet>,
-        Box::new(FphDynSet::new(0.9, &[]).unwrap()) as Box<dyn HashSet>,
         Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
         Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
-        Box::new(MapEmbed::new(&[]).unwrap()) as Box<dyn HashSet>,
     ];
 
-    #[cfg(feature = "ekphf")]
+    #[cfg(feature = "extc")]
     {
         hashers.extend(vec![
+            Box::new(FphDynSet::new(0.9, &[]).unwrap()) as Box<dyn HashSet>,
+            Box::new(MapEmbed::new(&[]).unwrap()) as Box<dyn HashSet>,
             Box::new(KphfSet::<Tbb85Set, BIN_SIZE>::try_new(0.0, 0.0, &[]).unwrap())
                 as Box<dyn HashSet>,
             Box::new(KphfSet::<Tbb84pSet, BIN_SIZE>::try_new(0.0, 0.0, &[]).unwrap())
