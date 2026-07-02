@@ -222,7 +222,9 @@ thread_local! {
 impl Bencher {
     pub fn new(n: usize) -> Self {
         let mut keys = vec![0; n];
-        rand::fill(&mut keys[..]);
+        let (chunks, tail) = keys.as_chunks_mut::<{ 1 << 20 }>();
+        chunks.par_iter_mut().for_each(|chunk| rand::fill(chunk));
+        rand::fill(tail);
         let mut queries = vec![
             vec![
                 [
