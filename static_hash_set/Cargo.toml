@@ -39,3 +39,4 @@ cuckoofilter = { version = "0.5.0", optional = true }
 fph-table-sys = { path = "../ext/fph-table-sys", optional = true }
 mapembed-sys = { path = "../ext/mapembed-sys", optional = true }
 engineering-kphf = { path = "../ext/engineering-kphf", optional = true }
+rayon = "1.12.0"

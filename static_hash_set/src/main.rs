@@ -31,6 +31,7 @@ use kphf_set::KphfSet;
 use mock_hashset::MockHashSet;
 use phf_set::PhfSet;
 use rand::seq::IndexedRandom;
+use rayon::prelude::*;
 use traits::HashSet;
 use u64_hashset::U64HashSet;
 
@@ -235,7 +236,8 @@ impl Bencher {
             ];
             *THREADS.last().unwrap_or(&0)
         ];
-        for threads_queries in &mut queries {
+
+        queries.par_iter_mut().for_each(|threads_queries| {
             for repeat_queries in threads_queries {
                 let rng = &mut rand::rng();
                 for (q, p) in std::iter::zip(&mut repeat_queries.iter_mut(), PERCENTILES) {
@@ -248,7 +250,7 @@ impl Bencher {
                     }
                 }
             }
-        }
+        });
         Self { n, keys, queries }
     }
 
