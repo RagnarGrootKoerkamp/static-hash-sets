@@ -95,6 +95,7 @@ impl HashSet for hashbrown::HashSet<T, gxhash::GxBuildHasher> {
     }
 }
 
+#[cfg(feature = "ext")]
 impl HashSet for fastbloom::BloomFilter<gxhash::GxBuildHasher> {
     fn name(&self) -> &'static str {
         "BloomFilter"
@@ -119,6 +120,7 @@ impl HashSet for fastbloom::BloomFilter<gxhash::GxBuildHasher> {
     }
 }
 
+#[cfg(feature = "ext")]
 impl HashSet for cuckoofilter::CuckooFilter<gxhash::GxHasher> {
     fn name(&self) -> &'static str {
         "CuckooFilter"
