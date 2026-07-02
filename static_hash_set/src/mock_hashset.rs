@@ -1,7 +1,6 @@
 //! A fake hashset that can be used for memory throughput measurements.
 
 use std::hash::{BuildHasher, BuildHasherDefault};
-use wide::CmpEq;
 
 use super::BIN_SIZE;
 use crate::traits::HashSet;

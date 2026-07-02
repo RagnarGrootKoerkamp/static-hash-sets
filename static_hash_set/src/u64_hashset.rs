@@ -6,7 +6,6 @@
 //! 1 cache miss per access, not 2.
 
 use std::hash::{BuildHasher, BuildHasherDefault};
-use wide::CmpEq;
 
 use crate::{traits::HashSet, Bin, BIN_SIZE, S, T};
 

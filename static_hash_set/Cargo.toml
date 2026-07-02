@@ -17,12 +17,12 @@ extc = ["dep:fph-table-sys", "dep:mapembed-sys", "dep:engineering-kphf"]
 
 [dependencies]
 fxhash = "0.2.1"
-mem_dbg = { version = "0.3.0", features = ["derive"] }
+mem_dbg = { version = "0.4.3", features = ["derive"] }
 memsize = "0.1.4"
 prefetch-index = "0.2.0"
-rand = "0.9.2"
+rand = "0.10.2"
 rustc-hash = "2.1.1"
-wide = "0.7.33"
+wide = "1.5.0"
 csv = "1.4.0"
 serde = { version = "1.0.228", features = ["serde_derive"] }
 seedable_hash = { version = "0.2.3", features = ["gxhash"] }
@@ -33,7 +33,7 @@ kphf = { path = "../kphf", optional = true }
 hashbrown = { path = "../ext/hashbrown", optional = true }
 ph = { version = "0.11.0", optional = true }
 ptr_hash = { version = "2.0.0-alpha.1", optional = true }
-fastbloom = { version = "0.14.0", optional = true }
+fastbloom = { version = "0.17.0", optional = true }
 cuckoofilter = { version = "0.5.0", optional = true }
 
 fph-table-sys = { path = "../ext/fph-table-sys", optional = true }
