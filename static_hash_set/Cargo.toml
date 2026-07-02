@@ -7,8 +7,10 @@ edition = "2024"
 diffie = []
 floyd = []
 
+kphf = ["dep:kphf"]
+
 # Enable external rust-based hash set implemenations in the library.
-ext = []
+ext = ["dep:hashbrown", "dep:ph", "dep:ptr_hash"]
 
 # Enable external c-based hash set implemenations in the benchmarks.
 extc = ["dep:fph-table-sys", "dep:mapembed-sys", "dep:engineering-kphf"]
@@ -17,21 +19,22 @@ extc = ["dep:fph-table-sys", "dep:mapembed-sys", "dep:engineering-kphf"]
 cuckoofilter = "0.5.0"
 fastbloom = "0.14.0"
 fxhash = "0.2.1"
-hashbrown = { path = "../ext/hashbrown" }
 mem_dbg = { version = "0.3.0", features = ["derive"] }
 memsize = "0.1.4"
 prefetch-index = "0.2.0"
 rand = "0.9.2"
 rustc-hash = "2.1.1"
-sux = "0.14.0"
 wide = "0.7.33"
-kphf.path = "../kphf"
 csv = "1.4.0"
-serde = "1.0.228"
-ptr_hash = "2.0.0-alpha.1"
-ph = "0.11.0"
+serde = { version = "1.0.228", features = ["serde_derive"] }
 seedable_hash = { version = "0.2.3", features = ["gxhash"] }
 gxhash = "3.5.0"
+
+kphf = { path = "../kphf", optional = true }
+
+hashbrown = { path = "../ext/hashbrown", optional = true }
+ph = { version = "0.11.0", optional = true }
+ptr_hash = { version = "2.0.0-alpha.1", optional = true }
 
 fph-table-sys = { path = "../ext/fph-table-sys", optional = true }
 mapembed-sys = { path = "../ext/mapembed-sys", optional = true }

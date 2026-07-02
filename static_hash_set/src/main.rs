@@ -25,6 +25,7 @@ use cuckoo::{CuckooSet, Mode};
 use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
 #[cfg(feature = "extc")]
 use fph_table::FphDynSet;
+#[cfg(feature = "kphf")]
 use kphf::{self, space_lower_bound, KptrHash};
 use kphf_set::KphfSet;
 use mock_hashset::MockHashSet;

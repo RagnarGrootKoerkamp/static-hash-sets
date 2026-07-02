@@ -10,10 +10,14 @@ use phf_set::PhfSet;
 #[test]
 fn test() {
     let mut hashers = vec![
-        Box::new(hashbrown::HashSet::<T, gxhash::GxBuildHasher>::default()) as Box<dyn HashSet>,
-        Box::new(U64HashSet::new(1.1, &[])),
+        Box::new(U64HashSet::new(1.1, &[])) as Box<dyn HashSet>,
         Box::new(CuckooSet::<{ Mode::Lazy as u8 }>::new(1.1, &[])),
         Box::new(CuckooSet::<{ Mode::Eager as u8 }>::new(1.1, &[])),
+    ];
+
+    #[cfg(feature = "kphf")]
+    {
+        hashers.extend(vec![
         Box::new(
             KphfSet::<KptrHash<{ kphf::Mode::SortBump as u8 }, BIN_SIZE>, BIN_SIZE>::try_new(
                 0.9,
@@ -46,9 +50,17 @@ fn test() {
             )
             .unwrap(),
         ) as Box<dyn HashSet>,
-        Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
-        Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
-    ];
+        ]);
+    }
+
+    #[cfg(feature = "ext")]
+    {
+        hashers.extend(vec![
+            Box::new(hashbrown::HashSet::<T, gxhash::GxBuildHasher>::default()) as Box<dyn HashSet>,
+            Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
+            Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, &[])) as Box<dyn HashSet>,
+        ]);
+    }
 
     #[cfg(feature = "extc")]
     {

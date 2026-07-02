@@ -2005,7 +2005,6 @@ dependencies = [
  "rustc-hash",
  "seedable_hash",
  "serde",
- "sux 0.14.0",
  "wide",
 ]
 

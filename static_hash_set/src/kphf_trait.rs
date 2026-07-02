@@ -12,6 +12,7 @@ pub trait Kphf<const K: usize>: Sized {
     fn num_bumped(&self) -> usize;
 }
 
+#[cfg(feature = "kphf")]
 impl<const MODE: u8, const K: usize> Kphf<K> for kphf::KptrHash<MODE, K> {
     fn name(&self) -> &'static str {
         match kphf::Mode::from(MODE) {

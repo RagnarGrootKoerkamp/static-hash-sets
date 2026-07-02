@@ -63,6 +63,7 @@ pub trait HashSet: Send + Sync {
     }
 }
 
+#[cfg(feature = "ext")]
 impl HashSet for hashbrown::HashSet<T, gxhash::GxBuildHasher> {
     fn name(&self) -> &'static str {
         "FxHashSet"

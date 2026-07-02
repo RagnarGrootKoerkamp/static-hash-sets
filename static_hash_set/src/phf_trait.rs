@@ -1,7 +1,9 @@
+#[cfg(feature = "ext")]
 use ph::{
     phast::{self, compressed_array::CompactFast},
     GetSize,
 };
+#[cfg(feature = "ext")]
 use ptr_hash::DefaultPtrHash;
 
 use super::T;
@@ -13,6 +15,7 @@ use super::T;
 /// on top of that, for faster queries:
 /// - single part
 /// - no remapping
+#[cfg(feature = "ext")]
 pub type PtrHash = ptr_hash::DefaultPtrHash<ptr_hash::hash::Gx>;
 
 pub trait Phf {
@@ -23,6 +26,7 @@ pub trait Phf {
     fn bits_used(&self) -> usize;
 }
 
+#[cfg(feature = "ext")]
 impl Phf for PtrHash {
     fn name(&self) -> &'static str {
         "PtrHash"
@@ -57,8 +61,10 @@ impl Phf for PtrHash {
 /// - S=8
 /// - lambda = 4.1
 /// - No remapping (using Perfect instead of Function2)
+#[cfg(feature = "ext")]
 pub type PHast = ph::phast::Perfect<ph::seeds::Bits8, ph::phast::ShiftOnlyWrapped<2>>;
 
+#[cfg(feature = "ext")]
 impl Phf for PHast {
     fn name(&self) -> &'static str {
         "PHast"
@@ -95,9 +101,11 @@ impl Phf for PHast {
 /// - S=8
 /// - lambda = 4.1
 /// - With CompactFast remapping (using Function2 instead of Perfect)
+#[cfg(feature = "ext")]
 pub type PHastMinimal =
     ph::phast::Function2<ph::seeds::Bits8, ph::phast::ShiftOnlyWrapped<2>, CompactFast>;
 
+#[cfg(feature = "ext")]
 impl Phf for PHastMinimal {
     fn name(&self) -> &'static str {
         "PHast"
