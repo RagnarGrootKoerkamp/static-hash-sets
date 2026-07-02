@@ -14,6 +14,8 @@ def read_data(name):
     """Read and preprocess benchmark data for a given benchmark name."""
     data = pd.read_csv(f"data-{name}.csv")
 
+    data = data[data.n < 500_000_000]
+
     def cleanup_name(h):
         if "Function2" in h:
             return "PhfSet<PHast+minimal>"
