@@ -4,16 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+default = ["kphf", "bench"]
 diffie = []
 floyd = []
 
 kphf = ["dep:kphf"]
+bench = ["dep:hashbrown", "dep:ph", "dep:ptr_hash", "dep:fph-table-sys"]
 
 # Enable external rust-based hash set implemenations in the library.
-ext = ["dep:hashbrown", "dep:ph", "dep:ptr_hash", "dep:fastbloom", "dep:cuckoofilter"]
+ext = ["dep:fastbloom", "dep:cuckoofilter"]
 
 # Enable external c-based hash set implemenations in the benchmarks.
-extc = ["dep:fph-table-sys", "dep:mapembed-sys", "dep:engineering-kphf"]
+extc = ["dep:mapembed-sys", "dep:engineering-kphf"]
 
 [dependencies]
 fxhash = "0.2.1"

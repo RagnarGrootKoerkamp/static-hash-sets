@@ -1,9 +1,6 @@
-#[cfg(feature = "ext")]
-use ph::{
-    phast::{self, compressed_array::CompactFast},
-    GetSize,
-};
-#[cfg(feature = "ext")]
+#[cfg(feature = "bench")]
+use ph::{phast::compressed_array::CompactFast, GetSize};
+#[cfg(feature = "bench")]
 use ptr_hash::DefaultPtrHash;
 
 use super::T;
@@ -15,7 +12,7 @@ use super::T;
 /// on top of that, for faster queries:
 /// - single part
 /// - no remapping
-#[cfg(feature = "ext")]
+#[cfg(feature = "bench")]
 pub type PtrHash = ptr_hash::DefaultPtrHash<ptr_hash::hash::Gx>;
 
 pub trait Phf {
@@ -26,7 +23,7 @@ pub trait Phf {
     fn bits_used(&self) -> usize;
 }
 
-#[cfg(feature = "ext")]
+#[cfg(feature = "bench")]
 impl Phf for PtrHash {
     fn name(&self) -> &'static str {
         "PtrHash"
@@ -61,23 +58,23 @@ impl Phf for PtrHash {
 /// - S=8
 /// - lambda = 4.1
 /// - No remapping (using Perfect instead of Function2)
-#[cfg(feature = "ext")]
+#[cfg(feature = "bench")]
 pub type PHast = ph::phast::Perfect<ph::seeds::Bits8, ph::phast::ShiftOnlyWrapped<2>>;
 
-#[cfg(feature = "ext")]
+#[cfg(feature = "bench")]
 impl Phf for PHast {
     fn name(&self) -> &'static str {
         "PHast"
     }
 
     fn new(keys: &[T]) -> Self {
-        let params = phast::Params::new(ph::seeds::Bits8, 410);
+        let params = ph::phast::Params::new(ph::seeds::Bits8, 410);
         Self::with_slice_p_threads_hash_sc(
             keys,
             &params,
             6,
             seedable_hash::BuildDefaultSeededHasher::default(),
-            phast::ShiftOnlyWrapped::<2>,
+            ph::phast::ShiftOnlyWrapped::<2>,
         )
     }
 
@@ -91,6 +88,8 @@ impl Phf for PHast {
     }
 
     fn bits_used(&self) -> usize {
+        use ph::GetSize;
+
         self.size_bytes_content_dyn() * 8
     }
 }
@@ -101,24 +100,24 @@ impl Phf for PHast {
 /// - S=8
 /// - lambda = 4.1
 /// - With CompactFast remapping (using Function2 instead of Perfect)
-#[cfg(feature = "ext")]
+#[cfg(feature = "bench")]
 pub type PHastMinimal =
     ph::phast::Function2<ph::seeds::Bits8, ph::phast::ShiftOnlyWrapped<2>, CompactFast>;
 
-#[cfg(feature = "ext")]
+#[cfg(feature = "bench")]
 impl Phf for PHastMinimal {
     fn name(&self) -> &'static str {
         "PHast"
     }
 
     fn new(keys: &[T]) -> Self {
-        let params = phast::Params::new(ph::seeds::Bits8, 410);
+        let params = ph::phast::Params::new(ph::seeds::Bits8, 410);
         Self::with_slice_p_threads_hash_sc(
             keys,
             &params,
             6,
             seedable_hash::BuildDefaultSeededHasher::default(),
-            phast::ShiftOnlyWrapped::<2>,
+            ph::phast::ShiftOnlyWrapped::<2>,
         )
     }
 

@@ -4,7 +4,7 @@ mod bin;
 mod cuckoo;
 #[cfg(feature = "extc")]
 mod ekphf;
-#[cfg(feature = "extc")]
+#[cfg(feature = "bench")]
 mod fph_table;
 mod kphf_set;
 mod kphf_trait;
@@ -23,7 +23,7 @@ use std::{cell::RefCell, hint::black_box};
 use cuckoo::{CuckooSet, Mode};
 #[cfg(feature = "extc")]
 use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
-#[cfg(feature = "extc")]
+#[cfg(feature = "bench")]
 use fph_table::FphDynSet;
 #[cfg(feature = "kphf")]
 use kphf::{self, space_lower_bound, KptrHash};
