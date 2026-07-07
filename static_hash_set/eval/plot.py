@@ -139,7 +139,7 @@ def build_legend(fig, axes, bbox_y_anchor):
             text.set_fontweight("bold")
 
 
-titles = ["p=0.01", "p=0.50", "p=0.99"]
+titles = ["1% positive", "50% positive", "99% positive"]
 names = sys.argv[1:]
 
 if "single" in names:
