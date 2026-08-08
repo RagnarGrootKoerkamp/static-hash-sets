@@ -15,6 +15,8 @@ mod phf_set;
 mod phf_trait;
 #[cfg(test)]
 mod test;
+#[cfg(feature = "tpht")]
+mod tpht;
 mod traits;
 mod u64_hashset;
 
@@ -146,6 +148,12 @@ fn main() {
                 Some(Box::new(FphDynSet::new(alpha, keys)?) as Box<dyn HashSet>)
             },
             vec![0.95],
+        ),
+        // TPHT
+        #[cfg(feature = "tpht")]
+        (
+            |_alpha: f32, keys: &[T]| Some(Box::new(tpht::Tpht::new(keys)?) as Box<dyn HashSet>),
+            vec![0.9],
         ),
         // // engineering k-PHF:
         // // - Only use the Hash-displace variant with faster queries.

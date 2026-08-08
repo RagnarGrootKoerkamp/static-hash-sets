@@ -4,7 +4,7 @@ fn main() {
         .std("c++17")
         .opt_level(3)
         .flag("-march=native")
-        .flag("-flto")
+        //.flag("-flto")
         .include("third_party/fph-table/include")
         .file("csrc/fph_wrapper.cpp")
         .compile("fph_wrapper");

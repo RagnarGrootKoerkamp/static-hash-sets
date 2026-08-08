@@ -4,7 +4,7 @@
 //! at most k=8 keys. To use as a set, actual keys are stored in bins indexed by the PHF.
 use crate::kphf_trait::Kphf;
 use crate::traits::HashSet;
-use crate::u64_hashset::Bin;
+use crate::Bin;
 use crate::BIN_SIZE;
 use crate::S;
 use crate::T;

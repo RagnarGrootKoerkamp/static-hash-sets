@@ -13,7 +13,7 @@ fn main() {
         .std("c++20")
         .opt_level(3)
         .flag("-march=native")
-        .flag("-lto")
+        // .flag("-lto")
         .flag("-w") // suppress warnings
         // Disable parallel ips2ra (no TBB dependency)
         .define("IPS2RA_DISABLE_PARALLEL", None)
