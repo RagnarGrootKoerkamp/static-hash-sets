@@ -117,6 +117,20 @@ def plot_dataset(df, lower_bounds, output_path: Path) -> None:
         squeeze=False,
     )
 
+    table = df[(df.factor == 1.5) & (df["mode"] == "SortBump")][
+        [
+            "k",
+            "alpha",
+            "actual_alpha",
+            "target_bits_per_key",
+            "actual_bits_per_key",
+            "bumped_frac",
+            "build_ns",
+            "loop_ns",
+        ]
+    ]
+    print(table)
+
     fig.suptitle(f"Performance of $k$-PtrHash", fontsize=20)
 
     for col, k in enumerate(k_values):
