@@ -6,7 +6,7 @@ fn main() {
         .flag("-mavx2")
         .include("third_party/tinyptr/src")
         .file("csrc/tinyptr_wrapper.cpp")
-        .file("third_party/tinyptr/src/nonconc_blast_ht.cpp")
+        .file("third_party/tinyptr/src/blast_ht.cpp")
         .compile("tinyptr");
 
     println!("cargo:rerun-if-changed=csrc/tinyptr_wrapper.cpp");
