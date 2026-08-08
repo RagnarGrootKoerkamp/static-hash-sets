@@ -2066,6 +2066,7 @@ dependencies = [
  "rustc-hash",
  "seedable_hash",
  "serde",
+ "tpht-sys",
  "wide",
 ]
 
@@ -2336,6 +2337,13 @@ checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tpht-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
