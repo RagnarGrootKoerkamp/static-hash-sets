@@ -16,7 +16,7 @@ ext = ["dep:fastbloom", "dep:cuckoofilter"]
 
 # Enable external c-based hash set implemenations in the benchmarks.
 extc = ["dep:mapembed-sys", "dep:engineering-kphf"]
-tpht = ["dep:tpht-sys"]
+tpht = ["dep:tpht-sys", "dep:tinyptr-sys"]
 
 [dependencies]
 fxhash = "0.2.1"
@@ -43,4 +43,5 @@ fph-table-sys = { path = "../ext/fph-table-sys", optional = true }
 mapembed-sys = { path = "../ext/mapembed-sys", optional = true }
 engineering-kphf = { path = "../ext/engineering-kphf", optional = true }
 tpht-sys = { path = "../ext/tpht-sys", optional = true }
+tinyptr-sys = { path = "../ext/tinyptr-sys", optional = true }
 rayon = "1.12.0"

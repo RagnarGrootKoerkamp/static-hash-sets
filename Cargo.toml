@@ -1,5 +1,5 @@
 [workspace]
-members = ["ext/mapembed-sys", "ext/fph-table-sys", "kphf", "static_hash_set", "ext/engineering-kphf", "ext/tpht-sys"]
+members = ["ext/mapembed-sys", "ext/fph-table-sys", "kphf", "static_hash_set", "ext/engineering-kphf", "ext/tpht-sys", "ext/tinyptr-sys"]
 resolver = "3"
 
 [profile.release]
