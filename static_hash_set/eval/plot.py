@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Run ./plot.py laptop slides && ./plot.py laptop slides mt
+# Output:
+# - kphf-set-laptop-slides.pdf
+# - kphf-set-laptop-slides-mt.pdf
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -60,7 +64,7 @@ def read_data(name):
 
 metric_name = {
     "loop": "for loop",
-    "prefetch2": "loop with prefetching",
+    "prefetch2": "with prefetching",
 }
 
 cpu_names = {
@@ -69,7 +73,7 @@ cpu_names = {
     "floyd": "Intel Xeon Gold 6530 server",
 }
 
-queries = ["q01", "q50", "q99"]
+queries = ["q50"]
 
 label_color = {
     "HashSet": "red",
@@ -139,8 +143,17 @@ def build_legend(fig, axes, bbox_y_anchor):
             text.set_fontweight("bold")
 
 
-titles = ["1% positive", "50% positive", "99% positive"]
+titles = ["50% positive"]
 names = sys.argv[1:]
+slides = "slides" in names
+if slides:
+    names.remove("slides")
+prefetch = "prefetch" in names
+if prefetch:
+    names.remove("prefetch")
+mt = "mt" in names
+if mt:
+    names.remove("mt")
 
 if "single" in names:
     names.remove("single")
@@ -227,16 +240,14 @@ for name in names:
     print(name)
     plt.close()
 
-    row_specs = [
-        ("loop", 1),
-        ("loop", max_threads),
-        ("prefetch2", 1),
-        ("prefetch2", max_threads),
-    ]
+    thread_specs = [1, max_threads]
+    metric_specs = ["loop", "prefetch2"]
+    if slides:
+        thread_specs = [12 if mt else 1]
 
-    nrows = len(row_specs)
-    ncols = len(queries)
-    figsize = (4 * ncols, 3 * nrows)
+    nrows = len(thread_specs)
+    ncols = len(metric_specs)
+    figsize = (4 * ncols, 3 * nrows if not slides else 4.5)
     fig, axes = plt.subplots(
         nrows,
         ncols,
@@ -246,10 +257,10 @@ for name in names:
         squeeze=False,
     )
 
-    for ri, (metric, threads) in enumerate(row_specs):
-        row_data = data[(data["threads"] == threads) & (data["metric"] == metric)]
-        groups = row_data.groupby(["h", "alpha"], sort=False)
-        for ci, (q, title) in enumerate(zip(queries, titles)):
+    for ri, threads in enumerate(thread_specs):
+        for ci, metric in enumerate(metric_specs):
+            row_data = data[(data["threads"] == threads) & (data["metric"] == metric)]
+            groups = row_data.groupby(["h", "alpha"], sort=False)
             ax = axes[ri][ci]
             for (h, alpha), subset in sorted(
                 groups,
@@ -265,7 +276,7 @@ for name in names:
                 sns.lineplot(
                     data=subset,
                     x="n",
-                    y=q,
+                    y=queries[0],
                     ax=ax,
                     estimator=None,
                     errorbar=None,
@@ -279,22 +290,32 @@ for name in names:
                     ),
                 )
             if ri == 0:
-                ax.set_title(title)
+                ax.set_title(metric_name[metric])
             ax.set_xlabel("n" if ri == nrows - 1 else "")
             ax.set_xscale("log", base=2)
             ax.grid(True, which="both", ls="--", lw=0.5)
-            ax.set_ylabel(
-                f"{metric_name[metric]}\nthreads={threads}\nns / query"
-                if ci == 0
-                else ""
-            )
+            ax.set_ylabel(f"ns / query" if ci == 0 else "")
             ax.set_ylim(0)
             ax.legend().remove() if ax.get_legend() else None
+            if slides:
+                ax.set_ylim(0, 6.5 if mt else 30)
 
-    build_legend(fig, axes, -0.02)
+    build_legend(fig, axes, -0.15 if slides else -0.1)
 
-    fig.suptitle(f"Hashset<u64> query throughput ({cpu_name})")
+    if mt:
+        fig.suptitle(
+            f"Hashset<u64> query throughput (50% positive queries, {cpu_name}, 12 threads)"
+        )
+    else:
+        fig.suptitle(
+            f"Hashset<u64> query throughput (50% positive queries, {cpu_name}, 1 thread)"
+        )
     fig.tight_layout(rect=[0, 0.05, 1, 1])
+    out = name
+    if slides:
+        out += "-slides"
+        if mt:
+            out += "-mt"
     # fig.savefig(f"kphf-set-{name}.png", bbox_inches="tight", dpi=300)
-    fig.savefig(f"kphf-set-{name}.pdf", bbox_inches="tight")
+    fig.savefig(f"kphf-set-{out}.pdf", bbox_inches="tight")
     # fig.savefig(f"kphf-set-{name}.svg", bbox_inches="tight")
