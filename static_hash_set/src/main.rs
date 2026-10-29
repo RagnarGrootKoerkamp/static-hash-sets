@@ -62,10 +62,17 @@ const PERCENTILES: [f64; 3] = [0.01, 0.5, 0.99];
 const MODES: [&str; 3] = ["loop", "prefetch", "prefetch2"];
 // const MODES: [&str; 1] = ["prefetch"];
 
+fn quick_bench() -> bool {
+    std::env::args().any(|arg| arg == "--quick")
+}
+
 fn main() {
+    let quick = quick_bench();
+    let growth = if quick { 1.4f64 } else { 1.2f64 };
+    let max_n = if quick { 10_000_000 } else { 1_000_000_000 };
     let ns = (0..)
-        .map(|i| (1_000_000. * 1.2f32.powi(i)) as usize)
-        .take_while(|x| *x <= 1_000_000_000)
+        .map(|i| (1_000_000. * growth.powi(i)) as usize)
+        .take_while(|&n| n <= max_n)
         .collect::<Vec<_>>();
 
     let hashers = vec![
@@ -161,6 +168,8 @@ fn main() {
         #[cfg(feature = "tpht")]
         (
             |_alpha: f32, keys: &[T]| {
+                // TinyPtr currently panics during construction on quick-run inputs.
+                if quick_bench() { return None; }
                 Some(Box::new(tinyptr::TinyPtr::new(keys)?) as Box<dyn HashSet>)
             },
             vec![0.85],
@@ -208,6 +217,7 @@ fn time<T>(mut f: impl FnMut() -> T) -> (f32, T) {
 pub struct Bencher {
     n: usize,
     keys: Vec<T>,
+    query_count: usize,
     queries: Vec<Vec<[Vec<T>; 5]>>,
 }
 
@@ -244,18 +254,20 @@ impl Bencher {
         let (chunks, tail) = keys.as_chunks_mut::<{ 1 << 20 }>();
         chunks.par_iter_mut().for_each(|chunk| rand::fill(chunk));
         rand::fill(tail);
+        let query_count = if quick_bench() { 100_000 } else { QUERIES };
+        let thread_count = if quick_bench() { 1 } else { *THREADS.last().unwrap_or(&0) };
         let mut queries = vec![
             vec![
                 [
-                    vec![0; QUERIES],
-                    vec![0; QUERIES],
-                    vec![0; QUERIES],
-                    vec![0; QUERIES],
-                    vec![0; QUERIES],
+                    vec![0; query_count],
+                    vec![0; query_count],
+                    vec![0; query_count],
+                    vec![0; query_count],
+                    vec![0; query_count],
                 ];
                 REPEATS
             ];
-            *THREADS.last().unwrap_or(&0)
+            thread_count
         ];
 
         queries.par_iter_mut().for_each(|threads_queries| {
@@ -272,7 +284,7 @@ impl Bencher {
                 }
             }
         });
-        Self { n, keys, queries }
+        Self { n, keys, queries, query_count }
     }
 
     pub fn bench(
@@ -285,6 +297,7 @@ impl Bencher {
             return;
         };
         let name = h.name();
+        eprintln!("Benchmarking {name}: n={}, load={:.3}", self.n, h.load_factor());
         let build = build / self.n as f32;
         let bumped_frac = h.bumped_frac();
         let bits_per_key = h.allocation_size() as f32 * 8.0 / self.n as f32;
@@ -294,8 +307,9 @@ impl Bencher {
         let load_factor = h.load_factor();
         let pf = h.has_prefetch();
         for &threads in &THREADS {
+            if quick_bench() && threads != 1 { continue; }
             for metric in MODES {
-                for query_repeat in 0..QUERY_REPEATS {
+                for query_repeat in 0..if quick_bench() { 1 } else { QUERY_REPEATS } {
                     let mut query = [0f32; 5];
                     for (qi, &_p) in PERCENTILES.iter().enumerate() {
                         let start = std::time::Instant::now();
@@ -325,7 +339,7 @@ impl Bencher {
                                 }
                             });
                         }
-                        query[qi] = start.elapsed().as_nanos() as f32 / (threads * QUERIES) as f32;
+                        query[qi] = start.elapsed().as_nanos() as f32 / (threads * self.query_count) as f32;
                     }
                     let result = Result {
                         h: name.to_string(),
