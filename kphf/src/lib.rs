@@ -150,6 +150,8 @@ impl<const MODE: u8, const K: usize> KptrHash<MODE, K> {
     #[inline(always)]
     fn to_bin(&self, hash: u64, seed: u64) -> usize {
         pub const C: u64 = 0x517cc1b727220a95;
+        // FIXME: Use something better than this? see PHastR
+        // hash>>x or hash^x doesn't seem to really matter though
         let y = (hash ^ (seed >> 7)).wrapping_mul(C);
         (mul(y, (self.num_bins - PADDING) as u64) + (seed & SEED_MASK)) as usize
     }

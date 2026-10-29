@@ -103,7 +103,7 @@ impl HashSet for fastbloom::BloomFilter<gxhash::GxBuildHasher> {
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
         let h = fastbloom::BloomFilter::with_false_pos(0.01)
             .hasher(gxhash::GxBuildHasher::default())
-            .items(keys.iter().copied());
+            .items(keys.iter());
         // eprintln!("\nBits/elem:  {}", h.num_bits() as f32 / keys.len() as f32);
         // eprintln!("Num hashes: {}", h.num_hashes());
         Box::new(h)

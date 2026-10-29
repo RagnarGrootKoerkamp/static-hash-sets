@@ -156,6 +156,7 @@ fn main() {
         (
             |_alpha: f32, keys: &[T]| Some(Box::new(tpht::Tpht::new(keys)?) as Box<dyn HashSet>),
             vec![0.9],
+        ),
         // TinyPtr non-concurrent Blast hash table
         #[cfg(feature = "tpht")]
         (
