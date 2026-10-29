@@ -3,6 +3,7 @@
 mod bin;
 mod braided_cuckoo;
 mod cuckoo;
+mod cuckoo_quotienting;
 #[cfg(feature = "extc")]
 mod ekphf;
 #[cfg(feature = "bench")]
@@ -26,6 +27,7 @@ mod u64_hashset;
 use std::{cell::RefCell, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
+use cuckoo_quotienting::CuckooSet as CuckooQuotientSet;
 use braided_cuckoo::BraidedCuckooSet;
 #[cfg(feature = "extc")]
 use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
@@ -177,6 +179,61 @@ fn main() {
             },
             vec![0.7],
         ),
+        // Promising prefix filters: compare SIMD widths at the same occupancies.
+        (
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(CuckooQuotientSet::<{ Mode::Eager as u8 }, 8, true>::new(
+                    1. / alpha,
+                    keys,
+                )))
+            },
+            vec![0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8, true>::new(
+                    1. / alpha,
+                    keys,
+                )))
+            },
+            vec![0.7],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(CuckooQuotientSet::<{ Mode::Eager as u8 }, 16, true>::new(
+                    1. / alpha,
+                    keys,
+                )))
+            },
+            vec![0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16, true>::new(
+                    1. / alpha,
+                    keys,
+                )))
+            },
+            vec![0.7],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(CuckooQuotientSet::<{ Mode::Eager as u8 }, 32, true>::new(
+                    1. / alpha,
+                    keys,
+                )))
+            },
+            vec![0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                Some(Box::new(CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true>::new(
+                    1. / alpha,
+                    keys,
+                )))
+            },
+            vec![0.7],
+        ),
         // FPH
         #[cfg(feature = "extc")]
         (
@@ -259,6 +316,8 @@ pub struct Result {
     load_factor: f32,
     bumped_frac: f32,
     overhead: f32,
+    /// Allocated bytes divided by the input's n * sizeof(u64) bytes.
+    memory_ratio: f32,
     kphf_target_bits_per_key: f32,
     kphf_bits_per_key: f32,
     threads: usize,
@@ -324,14 +383,18 @@ impl Bencher {
             return;
         };
         let name = h.name();
-        eprintln!("Benchmarking {name}: n={}, load={:.3}", self.n, h.load_factor());
         let build = build / self.n as f32;
         let bumped_frac = h.bumped_frac();
         let bits_per_key = h.allocation_size() as f32 * 8.0 / self.n as f32;
         let kphf_target_bits_per_key = h.kphf_target_bits_per_key();
         let kphf_bits_per_key = h.kphf_size() as f32 * 8.0 / self.n as f32;
         let overhead = bits_per_key / T::BITS as f32;
+        let memory_ratio = overhead;
         let load_factor = h.load_factor();
+        eprintln!(
+            "Benchmarking {name}: n={}, alpha={load_factor:.3}, memory_ratio={memory_ratio:.3}",
+            self.n,
+        );
         let pf = h.has_prefetch();
         for &threads in &THREADS {
             if quick_bench() && threads != 1 { continue; }
@@ -380,6 +443,7 @@ impl Bencher {
                         load_factor,
                         bumped_frac,
                         overhead,
+                        memory_ratio,
                         kphf_target_bits_per_key,
                         kphf_bits_per_key,
                         // kphf_alpha,

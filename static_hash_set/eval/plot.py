@@ -35,6 +35,10 @@ def read_data(name):
             return "HashSet"
         return h
 
+    # Older CSVs call the same measured allocation/input ratio "overhead".
+    if "memory_ratio" not in data.columns:
+        data["memory_ratio"] = data["overhead"]
+
     data["h"] = data["h"].map(cleanup_name)
     data = data[~(data["h"] == "FphMetaSet")]
     data = data[~(data["h"] == "MapEmbed")]
@@ -51,15 +55,11 @@ def read_data(name):
         "metric",
         "n",
         "alpha",
-        "label",
         "kphf_target_bits_per_key",
     ]
 
-    data["label"] = data.apply(
-        lambda row: row["h"] + " (" + str(row["alpha"]) + "x)", axis=1
-    )
     data = data.groupby(group_columns, as_index=False, sort=False)[
-        ["build", "load_factor", *queries]
+        ["build", "load_factor", "memory_ratio", *queries]
     ].min()
 
     return data
@@ -82,6 +82,14 @@ label_color = {
     "HashSet": "red",
     "CuckooSet<Lazy>": "orange",
     "CuckooSet<Eager>": "brown",
+    "CuckooQuotientSet<Lazy>": "teal",
+    "CuckooQuotientSet<Eager>": "navy",
+    "CuckooQuotientSet<Lazy,8,SIMD>": "lightseagreen",
+    "CuckooQuotientSet<Eager,8,SIMD>": "royalblue",
+    "CuckooQuotientSet<Lazy,16,SIMD>": "teal",
+    "CuckooQuotientSet<Eager,16,SIMD>": "navy",
+    "CuckooQuotientSet<Lazy,32,SIMD>": "darkgreen",
+    "CuckooQuotientSet<Eager,32,SIMD>": "steelblue",
     "BraidedCuckooSet<Lazy>": "purple",
     "BraidedCuckooSet<Eager>": "magenta",
     "TPHT": "gray",
@@ -97,6 +105,12 @@ label_color = {
 }
 
 display_name = {
+    "CuckooQuotientSet<Lazy,8,SIMD>": "Quotient<Lazy, 8-bit SIMD>",
+    "CuckooQuotientSet<Eager,8,SIMD>": "Quotient<Eager, 8-bit SIMD>",
+    "CuckooQuotientSet<Lazy,16,SIMD>": "Quotient<Lazy, 16-bit SIMD>",
+    "CuckooQuotientSet<Eager,16,SIMD>": "Quotient<Eager, 16-bit SIMD>",
+    "CuckooQuotientSet<Lazy,32,SIMD>": "Quotient<Lazy, 32-bit SIMD>",
+    "CuckooQuotientSet<Eager,32,SIMD>": "Quotient<Eager, 32-bit SIMD>",
     "FphDynSet": "FPH",
     "PhfSet<PHast+>": "PHF-set<PHast+>",
     "PhfSet<PtrHash>": "PHF-set<PtrHash>",
@@ -113,11 +127,20 @@ def get_display_name(h):
     return h
 
 
-def braided_load_label(subset):
-    lo, hi = subset.load_factor.min(), subset.load_factor.max()
-    if round(lo, 2) == round(hi, 2):
-        return f" (load {lo:.2f})"
-    return f" (load {lo:.2f}–{hi:.2f})"
+def series_label(h, subset):
+    """Show measured occupancy and allocation/input ratio across plotted sizes."""
+
+    def value_range(column):
+        lo, hi = subset[column].min(), subset[column].max()
+        if round(lo, 2) == round(hi, 2):
+            return f"{lo:.2f}"
+        return f"{lo:.2f}–{hi:.2f}"
+
+    return (
+        get_display_name(h)
+        + f" ($\\alpha={value_range('load_factor')}$; "
+        + f"{value_range('memory_ratio')}×)"
+    )
 
 
 def width(name, alpha):
@@ -128,6 +151,15 @@ def width(name, alpha):
         0.9: 1.1,
         0.95: 0.8,
     }[alpha]
+
+
+def line_style(name):
+    if name.startswith("CuckooQuotientSet<"):
+        if ",8,SIMD>" in name:
+            return "--"
+        if ",32,SIMD>" in name:
+            return ":"
+    return "-"
 
 
 def build_legend(fig, axes, bbox_y_anchor):
@@ -161,7 +193,7 @@ def build_legend(fig, axes, bbox_y_anchor):
     legend = fig.legend(
         new_handles,
         new_labels,
-        loc="lower center",
+        loc="upper center",
         ncols=len(groups),
         fontsize=9,
         bbox_to_anchor=(0.5, bbox_y_anchor),
@@ -177,7 +209,7 @@ cpu_override = None
 if "--cpu" in names:
     idx = names.index("--cpu")
     cpu_override = names[idx + 1]
-    del names[idx:idx + 2]
+    del names[idx : idx + 2]
 slides = "slides" in names
 if slides:
     names.remove("slides")
@@ -240,15 +272,10 @@ if "single" in names:
                     errorbar=None,
                     color=label_color[h],
                     lw=width(h, alpha),
+                    linestyle=line_style(h),
                     marker="o",
                     markersize=3,
-                    label=get_display_name(h)
-                    + (
-                        (braided_load_label(subset)
-                         if h.startswith("BraidedCuckooSet") else f" ($\\alpha={alpha}$)")
-                        if alpha != 0.5
-                        else " ($0.44\\leq \\alpha \\leq 0.88$)"
-                    ),
+                    label=series_label(h, subset),
                 )
             if row_idx == 0:
                 ax.set_title(title)
@@ -259,7 +286,7 @@ if "single" in names:
             ax.set_ylim(0)
             ax.legend().remove() if ax.get_legend() else None
 
-    build_legend(fig, axes, -0.05)
+    build_legend(fig, axes, -0.02)
 
     fig.suptitle(f"StaticHashset<u64> query throughput (1 thread, loop with prefetch)")
     fig.tight_layout(rect=[0, 0.05, 1, 1])
@@ -318,15 +345,10 @@ for name in names:
                     errorbar=None,
                     color=label_color[h],
                     lw=width(h, alpha),
+                    linestyle=line_style(h),
                     marker="o",
                     markersize=3,
-                    label=get_display_name(h)
-                    + (
-                        (braided_load_label(subset)
-                         if h.startswith("BraidedCuckooSet") else f" ($\\alpha={alpha}$)")
-                        if alpha != 0.5
-                        else " ($0.44\\leq \\alpha \\leq 0.88$)"
-                    ),
+                    label=series_label(h, subset),
                 )
             if ri == 0:
                 ax.set_title(metric_name[metric])
@@ -339,7 +361,7 @@ for name in names:
             if slides:
                 ax.set_ylim(0, 6.5 if mt else 30)
 
-    build_legend(fig, axes, -0.5)
+    build_legend(fig, axes, -0.02)
 
     if mt:
         fig.suptitle(
