@@ -17,7 +17,7 @@ fn gen_keys(n: usize) -> Vec<u32> {
 const REPEATS: usize = 1;
 const NS: [usize; 1] = [10_000_000];
 const ALPHAS: [f32; 1] = [0.9];
-const FACTORS: [f32; 1] = [1.5];
+const FACTORS: [f32; 3] = [1.5, 1.4, 1.3];
 
 fn bench<const MODE: u8, const K: usize>() {
     for &n in &NS {
@@ -27,8 +27,13 @@ fn bench<const MODE: u8, const K: usize>() {
             for &factor in &FACTORS {
                 let target_bits_per_key = lb * factor;
 
+                eprintln!("n: {n}, alpha: {alpha}, factor: {factor}, target_bits_per_key: {target_bits_per_key}");
+
                 for (_repeat, keys) in std::iter::zip(0..REPEATS, &keys) {
                     let kphf = KptrHash::<MODE, K>::new(alpha, target_bits_per_key, &keys).unwrap();
+
+                    let actual_bits_per_key = kphf.bits_used() as f32 / n as f32;
+                    eprintln!("bits/key: {actual_bits_per_key}");
 
                     let bumped_frac = kphf.num_bumped() as f32 / n as f32 * 100.;
                     eprintln!("Bumped: {bumped_frac}%");
