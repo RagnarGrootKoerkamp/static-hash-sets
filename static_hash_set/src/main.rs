@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 mod bin;
+mod braided_cuckoo;
 mod cuckoo;
 #[cfg(feature = "extc")]
 mod ekphf;
@@ -25,6 +26,7 @@ mod u64_hashset;
 use std::{cell::RefCell, hint::black_box};
 
 use cuckoo::{CuckooSet, Mode};
+use braided_cuckoo::BraidedCuckooSet;
 #[cfg(feature = "extc")]
 use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
 #[cfg(feature = "bench")]
@@ -130,6 +132,23 @@ fn main() {
         //     // vec![0.7, 0.8, 0.9, 0.95],
         //     vec![0.7],
         // ),
+        // Static braided cuckoo (power-of-two layers, at least 10% slack).
+        (
+            |_alpha: f32, keys: &[T]| {
+                let set = BraidedCuckooSet::<{ Mode::Eager as u8 }>::try_new(keys);
+                if set.is_none() { eprintln!("BraidedCuckooSet<Eager>: placement failed for n={}", keys.len()); }
+                Some(Box::new(set?))
+            },
+            vec![0.9],
+        ),
+        (
+            |_alpha: f32, keys: &[T]| {
+                let set = BraidedCuckooSet::<{ Mode::Lazy as u8 }>::try_new(keys);
+                if set.is_none() { eprintln!("BraidedCuckooSet<Lazy>: placement failed for n={}", keys.len()); }
+                Some(Box::new(set?))
+            },
+            vec![0.9],
+        ),
         // Eager Cuckoo
         (
             |alpha: f32, keys: &[T]| {
