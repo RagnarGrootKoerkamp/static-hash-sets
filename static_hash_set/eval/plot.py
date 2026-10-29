@@ -10,13 +10,15 @@ import seaborn as sns
 import pandas as pd
 import math
 import sys
+from pathlib import Path
 
 w = 64
 
 
 def read_data(name):
     """Read and preprocess benchmark data for a given benchmark name."""
-    data = pd.read_csv(f"data-{name}.csv")
+    path = Path(name)
+    data = pd.read_csv(path if path.is_file() else f"data-{name}.csv")
 
     data = data[data.n < 500_000_000]
 
@@ -38,6 +40,7 @@ def read_data(name):
     data = data[~(data["h"] == "MapEmbed")]
     data = data[~(data["h"] == "Hd8Set")]
     data = data[~(data["h"] == "U64HashSet")]
+    data = data[~(data["h"] == "TPHT")]
     data = data[~(data["metric"] == "prefetch")]
 
     queries = ["q01", "q50", "q99"]
@@ -56,7 +59,7 @@ def read_data(name):
         lambda row: row["h"] + " (" + str(row["alpha"]) + "x)", axis=1
     )
     data = data.groupby(group_columns, as_index=False, sort=False)[
-        ["build", *queries]
+        ["build", "load_factor", *queries]
     ].min()
 
     return data
@@ -79,6 +82,10 @@ label_color = {
     "HashSet": "red",
     "CuckooSet<Lazy>": "orange",
     "CuckooSet<Eager>": "brown",
+    "BraidedCuckooSet<Lazy>": "purple",
+    "BraidedCuckooSet<Eager>": "magenta",
+    "TPHT": "gray",
+    "TinyPtr": "olive",
     "FphDynSet": "pink",
     "PhfSet<PHast+>": "lime",
     "PhfSet<PtrHash>": "cyan",
@@ -106,6 +113,13 @@ def get_display_name(h):
     return h
 
 
+def braided_load_label(subset):
+    lo, hi = subset.load_factor.min(), subset.load_factor.max()
+    if round(lo, 2) == round(hi, 2):
+        return f" (load {lo:.2f})"
+    return f" (load {lo:.2f}–{hi:.2f})"
+
+
 def width(name, alpha):
     if name != "kPhfSet<kPtrHash>":
         return 1.5
@@ -119,32 +133,51 @@ def width(name, alpha):
 def build_legend(fig, axes, bbox_y_anchor):
     """Build and add a custom legend to the figure with category headers."""
     handles, labels = axes[0][0].get_legend_handles_labels()
-    col_titles = ["Probing", "1-PHF-set", "$k$-PHF-set", "Lower bound"]
+    groups = {
+        "Probing": [],
+        "1-PHF-set": [],
+        "$k$-PHF-set": [],
+        "Lower bound": [],
+    }
+    for handle, label in zip(handles, labels):
+        if label.startswith("MockHashSet"):
+            category = "Lower bound"
+        elif label.startswith("$k$-PHF-set"):
+            category = "$k$-PHF-set"
+        elif label.startswith("PHF-set"):
+            category = "1-PHF-set"
+        else:
+            category = "Probing"
+        groups[category].append((handle, label))
+    groups = {title: entries for title, entries in groups.items() if entries}
+    rows = 1 + max(map(len, groups.values()))
     new_handles, new_labels = [], []
-    for i, (h, l) in enumerate(zip(handles, labels)):
-        if i % 3 == 0:
-            new_handles.append(mpatches.Patch(visible=False))
-            new_labels.append(col_titles[i // 3])
-        new_handles.append(h)
-        new_labels.append(l)
-    while len(new_handles) % 4 != 0:
-        new_handles.append(mpatches.Patch(visible=False))
-        new_labels.append("")
-    leg = fig.legend(
+    for title, entries in groups.items():
+        column = [(mpatches.Patch(visible=False), title), *entries]
+        column += [(mpatches.Patch(visible=False), "")] * (rows - len(column))
+        for handle, label in column:
+            new_handles.append(handle)
+            new_labels.append(label)
+    legend = fig.legend(
         new_handles,
         new_labels,
         loc="lower center",
-        ncols=len(col_titles),
-        fontsize=10,
+        ncols=len(groups),
+        fontsize=9,
         bbox_to_anchor=(0.5, bbox_y_anchor),
     )
-    for i, text in enumerate(leg.get_texts()):
-        if i % 4 == 0:
+    for i, text in enumerate(legend.get_texts()):
+        if i % rows == 0:
             text.set_fontweight("bold")
 
 
 titles = ["50% positive"]
 names = sys.argv[1:]
+cpu_override = None
+if "--cpu" in names:
+    idx = names.index("--cpu")
+    cpu_override = names[idx + 1]
+    del names[idx:idx + 2]
 slides = "slides" in names
 if slides:
     names.remove("slides")
@@ -207,9 +240,12 @@ if "single" in names:
                     errorbar=None,
                     color=label_color[h],
                     lw=width(h, alpha),
+                    marker="o",
+                    markersize=3,
                     label=get_display_name(h)
                     + (
-                        f" ($\\alpha={alpha}$)"
+                        (braided_load_label(subset)
+                         if h.startswith("BraidedCuckooSet") else f" ($\\alpha={alpha}$)")
                         if alpha != 0.5
                         else " ($0.44\\leq \\alpha \\leq 0.88$)"
                     ),
@@ -234,13 +270,13 @@ if "single" in names:
 
 for name in names:
     data = read_data(name)
-    cpu_name = cpu_names[name]
+    cpu_name = cpu_names.get(cpu_override or name, cpu_override or Path(name).stem)
     max_threads = max(data["threads"].unique())
 
     print(name)
     plt.close()
 
-    thread_specs = [1, max_threads]
+    thread_specs = sorted(data["threads"].unique()) if mt else [1]
     metric_specs = ["loop", "prefetch2"]
     if slides:
         thread_specs = [12 if mt else 1]
@@ -282,9 +318,12 @@ for name in names:
                     errorbar=None,
                     color=label_color[h],
                     lw=width(h, alpha),
+                    marker="o",
+                    markersize=3,
                     label=get_display_name(h)
                     + (
-                        f" ($\\alpha={alpha}$)"
+                        (braided_load_label(subset)
+                         if h.startswith("BraidedCuckooSet") else f" ($\\alpha={alpha}$)")
                         if alpha != 0.5
                         else " ($0.44\\leq \\alpha \\leq 0.88$)"
                     ),
@@ -300,7 +339,7 @@ for name in names:
             if slides:
                 ax.set_ylim(0, 6.5 if mt else 30)
 
-    build_legend(fig, axes, -0.15 if slides else -0.1)
+    build_legend(fig, axes, -0.5)
 
     if mt:
         fig.suptitle(
@@ -311,11 +350,11 @@ for name in names:
             f"Hashset<u64> query throughput (50% positive queries, {cpu_name}, 1 thread)"
         )
     fig.tight_layout(rect=[0, 0.05, 1, 1])
-    out = name
+    out = Path(name).stem
     if slides:
         out += "-slides"
         if mt:
             out += "-mt"
-    # fig.savefig(f"kphf-set-{name}.png", bbox_inches="tight", dpi=300)
+    fig.savefig(f"kphf-set-{out}.png", bbox_inches="tight", dpi=180)
     fig.savefig(f"kphf-set-{out}.pdf", bbox_inches="tight")
     # fig.savefig(f"kphf-set-{name}.svg", bbox_inches="tight")

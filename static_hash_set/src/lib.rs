@@ -1,11 +1,9 @@
 mod bin;
-#[cfg(feature = "ext")]
 pub mod braided_cuckoo;
 mod kphf_set;
 mod kphf_trait;
 mod traits;
 
-#[cfg(feature = "ext")]
 pub mod cuckoo;
 #[cfg(feature = "ext")]
 pub mod phf_set;

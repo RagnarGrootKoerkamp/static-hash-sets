@@ -72,10 +72,18 @@ fn main() {
     let quick = quick_bench();
     let growth = if quick { 1.4f64 } else { 1.2f64 };
     let max_n = if quick { 10_000_000 } else { 1_000_000_000 };
-    let ns = (0..)
-        .map(|i| (1_000_000. * growth.powi(i)) as usize)
-        .take_while(|&n| n <= max_n)
-        .collect::<Vec<_>>();
+    let args = std::env::args().collect::<Vec<_>>();
+    let fixed_n = args.windows(2).find(|pair| pair[0] == "--n")
+        .map(|pair| pair[1].parse::<usize>().expect("--n requires a positive integer"));
+    let ns = if let Some(n) = fixed_n {
+        assert!(n > 0, "--n must be positive");
+        vec![n]
+    } else {
+        (0..)
+            .map(|i| (1_000_000. * growth.powi(i)) as usize)
+            .take_while(|&n| n <= max_n)
+            .collect::<Vec<_>>()
+    };
 
     let hashers = vec![
         // Mock throughput hashset
