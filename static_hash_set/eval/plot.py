@@ -39,6 +39,10 @@ def read_data(name):
     if "memory_ratio" not in data.columns:
         data["memory_ratio"] = data["overhead"]
 
+    # Preserve support for older CSVs without inventing placement statistics.
+    if "primary_hit_ratio" not in data.columns:
+        data["primary_hit_ratio"] = float("nan")
+
     data["h"] = data["h"].map(cleanup_name)
     data = data[~(data["h"] == "FphMetaSet")]
     data = data[~(data["h"] == "MapEmbed")]
@@ -59,7 +63,7 @@ def read_data(name):
     ]
 
     data = data.groupby(group_columns, as_index=False, sort=False)[
-        ["build", "load_factor", "memory_ratio", *queries]
+        ["build", "load_factor", "memory_ratio", "primary_hit_ratio", *queries]
     ].min()
 
     return data
@@ -136,10 +140,19 @@ def series_label(h, subset):
             return f"{lo:.2f}"
         return f"{lo:.2f}–{hi:.2f}"
 
+    primary_label = ""
+    if "Cuckoo" in h:
+        ratios = subset["primary_hit_ratio"].dropna() * 100
+        if not ratios.empty:
+            lo, hi = ratios.min(), ratios.max()
+            percent = f"{lo:.1f}%" if round(lo, 1) == round(hi, 1) else f"{lo:.1f}–{hi:.1f}%"
+            primary_label = f"; primary {percent}"
+        else:
+            primary_label = "; primary n/a"
     return (
         get_display_name(h)
         + f" ($\\alpha={value_range('load_factor')}$; "
-        + f"{value_range('memory_ratio')}×)"
+        + f"{value_range('memory_ratio')}×{primary_label})"
     )
 
 

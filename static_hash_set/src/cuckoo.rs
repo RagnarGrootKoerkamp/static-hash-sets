@@ -8,10 +8,10 @@
 use std::hash::{BuildHasher, BuildHasherDefault};
 
 use super::BIN_SIZE;
-use crate::traits::HashSet;
 use crate::Bin;
 use crate::S;
 use crate::T;
+use crate::traits::HashSet;
 
 type Hasher = BuildHasherDefault<gxhash::GxHasher>;
 
@@ -266,6 +266,19 @@ impl<const MODE: u8> HashSet for CuckooSet<MODE> {
         self.len() as f32 / (self.num_bins * BIN_SIZE) as f32
     }
 
+    fn primary_hit_ratio(&self) -> Option<f32> {
+        let mut total = 0usize;
+        let mut primary = 0usize;
+        for (idx, bin) in self.table.iter().enumerate() {
+            for &key in &bin.0 {
+                if key != 0 {
+                    total += 1;
+                    primary += (self.bin_idx_1(key) == idx) as usize;
+                }
+            }
+        }
+        (total != 0).then(|| primary as f32 / total as f32)
+    }
     fn has_prefetch(&self) -> bool {
         true
     }
@@ -280,5 +293,25 @@ impl<const MODE: u8> HashSet for CuckooSet<MODE> {
     #[inline(always)]
     fn contains_with_token(&self, key: T, token: usize) -> bool {
         self.contains_with_token(key, token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn primary_ratio_matches_first_bucket_hits_and_excludes_zero() {
+        let keys: Vec<_> = (0..20_000).collect();
+        let set = CuckooSet::<0>::new(1.05, &keys);
+        let primary = set
+            .iter()
+            .filter(|&key| key != 0)
+            .filter(|&key| set.get_bin(set.bin_idx_1(key)).contains(S::splat(key as _)))
+            .count();
+        assert_eq!(set.primary_hit_ratio(), Some(primary as f32 / 19_999.0));
+        assert!(primary < 19_999);
+        assert_eq!(CuckooSet::<0>::new(1.1, &[]).primary_hit_ratio(), None);
+        assert_eq!(CuckooSet::<0>::new(1.1, &[0]).primary_hit_ratio(), None);
     }
 }

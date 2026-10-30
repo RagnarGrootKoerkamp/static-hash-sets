@@ -6,6 +6,11 @@ pub trait HashSet: Send + Sync {
     /// Bytes of the entire data structure.
     fn allocation_size(&self) -> usize;
     fn load_factor(&self) -> f32;
+    /// Fraction of stored nonzero keys found in their primary bucket.
+    /// None for empty sets and implementations without two cuckoo locations.
+    fn primary_hit_ratio(&self) -> Option<f32> {
+        None
+    }
     fn kphf_target_bits_per_key(&self) -> f32 {
         0.0
     }

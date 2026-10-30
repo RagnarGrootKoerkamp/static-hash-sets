@@ -509,6 +509,19 @@ impl<const MODE: u8> HashSet for BraidedCuckooSet<MODE> {
     fn load_factor(&self) -> f32 {
         self.len as f32 / (self.table.len() * BIN_SIZE) as f32
     }
+    fn primary_hit_ratio(&self) -> Option<f32> {
+        let mut total = 0usize;
+        let mut primary = 0usize;
+        for (idx, bin) in self.table.iter().enumerate() {
+            for &key in &bin.0 {
+                if key != 0 {
+                    total += 1;
+                    primary += (self.primary(key).1 == idx) as usize;
+                }
+            }
+        }
+        (total != 0).then(|| primary as f32 / total as f32)
+    }
     fn has_prefetch(&self) -> bool {
         true
     }
@@ -536,6 +549,11 @@ mod tests {
             expected
         );
         assert!(set.load_factor() <= 0.9);
+        let nonzero = expected.iter().filter(|&&key| key != 0).count();
+        let primary = expected.iter().filter(|&&key| key != 0)
+            .filter(|&&key| set.table[set.primary(key).1].contains(S::splat(key as _)))
+            .count();
+        assert_eq!(set.primary_hit_ratio(), (nonzero != 0).then(|| primary as f32 / nonzero as f32));
         for key in keys.iter().copied().chain(1_000_000..1_010_000) {
             let found = expected.contains(&key);
             assert_eq!(set.contains_lazy(key), found);

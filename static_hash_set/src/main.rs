@@ -70,6 +70,10 @@ fn quick_bench() -> bool {
     std::env::args().any(|arg| arg == "--quick")
 }
 
+fn cuckoo_only() -> bool {
+    std::env::args().any(|arg| arg == "--cuckoo-only")
+}
+
 fn main() {
     let quick = quick_bench();
     let growth = if quick { 1.4f64 } else { 1.2f64 };
@@ -91,6 +95,7 @@ fn main() {
         // Mock throughput hashset
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                if cuckoo_only() { return None; }
                 Some(Box::new(MockHashSet::new(1.0 / alpha, keys)))
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![1.0],
@@ -98,6 +103,7 @@ fn main() {
         // k-PHF-set
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                if cuckoo_only() { return None; }
                 Some(Box::new(KphfSet::<
                     KptrHash<{ kphf::Mode::SortBump as u8 }, BIN_SIZE>,
                     BIN_SIZE,
@@ -116,6 +122,7 @@ fn main() {
         // PtrHash
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                if cuckoo_only() { return None; }
                 Some(Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![0.99],
@@ -123,6 +130,7 @@ fn main() {
         // non-minimal PHast
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                if cuckoo_only() { return None; }
                 Some(Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![0.98],
@@ -130,6 +138,7 @@ fn main() {
         // SwissTable
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                if cuckoo_only() { return None; }
                 Some(Box::new(
                     hashbrown::HashSet::<T, gxhash::GxBuildHasher>::from_iter(keys.iter().cloned()),
                 ))
@@ -238,6 +247,7 @@ fn main() {
         #[cfg(feature = "extc")]
         (
             |alpha: f32, keys: &[T]| {
+                if cuckoo_only() { return None; }
                 Some(Box::new(FphDynSet::new(alpha, keys)?) as Box<dyn HashSet>)
             },
             vec![0.95],
@@ -245,7 +255,10 @@ fn main() {
         // TPHT
         #[cfg(feature = "tpht")]
         (
-            |_alpha: f32, keys: &[T]| Some(Box::new(tpht::Tpht::new(keys)?) as Box<dyn HashSet>),
+            |_alpha: f32, keys: &[T]| {
+                if cuckoo_only() { return None; }
+                Some(Box::new(tpht::Tpht::new(keys)?) as Box<dyn HashSet>)
+            },
             vec![0.9],
         ),
         // TinyPtr non-concurrent Blast hash table
@@ -253,7 +266,7 @@ fn main() {
         (
             |_alpha: f32, keys: &[T]| {
                 // TinyPtr currently panics during construction on quick-run inputs.
-                if quick_bench() { return None; }
+                if quick_bench() || cuckoo_only() { return None; }
                 Some(Box::new(tinyptr::TinyPtr::new(keys)?) as Box<dyn HashSet>)
             },
             vec![0.85],
@@ -314,6 +327,7 @@ pub struct Result {
     repeat: usize,
     build: f32,
     load_factor: f32,
+    primary_hit_ratio: Option<f32>,
     bumped_frac: f32,
     overhead: f32,
     /// Allocated bytes divided by the input's n * sizeof(u64) bytes.
@@ -338,8 +352,12 @@ impl Bencher {
     pub fn new(n: usize) -> Self {
         let mut keys = vec![0; n];
         let (chunks, tail) = keys.as_chunks_mut::<{ 1 << 20 }>();
-        chunks.par_iter_mut().for_each(|chunk| rand::fill(chunk));
+        chunks.par_iter_mut().for_each(|chunk| {
+            rand::fill(chunk);
+            for key in chunk { *key = (*key & cuckoo_quotienting::KEY_MASK).max(1); }
+        });
         rand::fill(tail);
+        for key in tail { *key = (*key & cuckoo_quotienting::KEY_MASK).max(1); }
         let query_count = if quick_bench() { 100_000 } else { QUERIES };
         let thread_count = if quick_bench() { 1 } else { *THREADS.last().unwrap_or(&0) };
         let mut queries = vec![
@@ -364,7 +382,7 @@ impl Bencher {
                         if rand::random_bool(p) {
                             *x = *keys.choose(rng).unwrap();
                         } else {
-                            *x = rand::random();
+                            *x = (rand::random::<T>() & cuckoo_quotienting::KEY_MASK).max(1);
                         }
                     }
                 }
@@ -391,6 +409,7 @@ impl Bencher {
         let overhead = bits_per_key / T::BITS as f32;
         let memory_ratio = overhead;
         let load_factor = h.load_factor();
+        let primary_hit_ratio = h.primary_hit_ratio();
         eprintln!(
             "Benchmarking {name}: n={}, alpha={load_factor:.3}, memory_ratio={memory_ratio:.3}",
             self.n,
@@ -441,6 +460,7 @@ impl Bencher {
                         metric,
                         build,
                         load_factor,
+                        primary_hit_ratio,
                         bumped_frac,
                         overhead,
                         memory_ratio,
