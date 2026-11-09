@@ -5,6 +5,7 @@ mod kphf_trait;
 mod traits;
 
 pub mod cuckoo;
+pub mod cuckoo_filtered;
 pub mod cuckoo_quotienting;
 #[cfg(feature = "ext")]
 pub mod phf_set;
