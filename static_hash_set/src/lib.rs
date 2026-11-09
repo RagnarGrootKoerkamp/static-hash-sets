@@ -6,7 +6,9 @@ mod traits;
 
 pub mod cuckoo;
 pub mod cuckoo_filtered;
+pub mod cuckoo_inline_filters;
 pub mod cuckoo_quotienting;
+pub mod cuckoo_spill;
 #[cfg(feature = "ext")]
 pub mod phf_set;
 #[cfg(feature = "ext")]

@@ -11,6 +11,10 @@ pub trait HashSet: Send + Sync {
     fn primary_hit_ratio(&self) -> Option<f32> {
         None
     }
+    /// Largest number of stored keys whose first location is the same bin.
+    fn max_primary_bucket_size(&self) -> Option<usize> {
+        None
+    }
     fn kphf_target_bits_per_key(&self) -> f32 {
         0.0
     }
@@ -71,7 +75,7 @@ pub trait HashSet: Send + Sync {
 #[cfg(feature = "bench")]
 impl HashSet for hashbrown::HashSet<T, gxhash::GxBuildHasher> {
     fn name(&self) -> &'static str {
-        "FxHashSet"
+        "HashbrownSet"
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
         let h = hashbrown::HashSet::from_iter(keys.iter().cloned());

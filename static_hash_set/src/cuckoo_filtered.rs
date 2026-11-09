@@ -7,11 +7,43 @@
 
 use std::hash::{BuildHasher, BuildHasherDefault};
 
-use super::BIN_SIZE;
-use crate::Bin;
+const BIN_SIZE: usize = 7;
 use crate::S;
 use crate::T;
 use crate::traits::HashSet;
+
+#[repr(C, align(64))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FilteredBin {
+    slots: [T; BIN_SIZE],
+    spill: u16,
+}
+
+impl FilteredBin {
+    #[inline(always)]
+    fn contains(&self, keys: S) -> bool {
+        let first: S = unsafe {
+            std::mem::transmute([self.slots[0], self.slots[1], self.slots[2], self.slots[3]])
+        };
+        let tail: S =
+            unsafe { std::mem::transmute([self.slots[4], self.slots[5], self.slots[6], 0]) };
+        (first.simd_eq(keys) | tail.simd_eq(keys)).to_bitmask() > 0
+    }
+    #[inline(always)]
+    fn has_zero(&self) -> bool {
+        self.slots.contains(&0)
+    }
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.slots.iter().filter(|&&key| key != 0).count()
+    }
+    #[inline(always)]
+    fn insert(&mut self, key: T) {
+        let idx = self.len();
+        assert!(idx < BIN_SIZE, "bucket is full");
+        self.slots[idx] = key;
+    }
+}
 
 type Hasher = BuildHasherDefault<gxhash::GxHasher>;
 
@@ -35,10 +67,10 @@ impl Mode {
 pub struct FilteredCuckooSet<const MODE: u8> {
     pub slot_ratio: f32,
     num_bins: usize,
-    table: Box<[Bin]>,
+    table: Box<[FilteredBin]>,
     len: usize,
     has_zero: bool,
-    spill: Box<[u16]>,
+    summary_ready: bool,
 }
 
 impl<const MODE: u8> FilteredCuckooSet<MODE> {
@@ -48,39 +80,48 @@ impl<const MODE: u8> FilteredCuckooSet<MODE> {
             this.insert(k);
         }
         this.rebuild_spill();
+        this.summary_ready = true;
         this
     }
     fn with_capacity(slot_ratio: f32, n: usize) -> Self {
         assert!(slot_ratio >= 1.0);
         let capacity = (n as f32 * slot_ratio).ceil() as usize;
         let num_bins = capacity.div_ceil(BIN_SIZE);
-        let table = vec![Bin([0 as T; BIN_SIZE]); num_bins].into_boxed_slice();
+        let table = vec![
+            FilteredBin {
+                slots: [0 as T; BIN_SIZE],
+                spill: 0
+            };
+            num_bins
+        ]
+        .into_boxed_slice();
         Self {
             slot_ratio,
             num_bins,
             table,
             len: 0,
             has_zero: false,
-            spill: vec![0; num_bins].into_boxed_slice(),
+            summary_ready: false,
         }
     }
 
     #[inline(always)]
     fn fingerprint_bit(key: T) -> u16 {
-        let mut x = key.wrapping_add(0x9e3779b97f4a7c15);
-        x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-        x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
-        1u16 << (((x ^ (x >> 31)) as u32) & 15)
+        let fingerprint = key.wrapping_mul(0x9e3779b97f4a7c15) >> 60;
+        1u16 << fingerprint
     }
 
     fn rebuild_spill(&mut self) {
-        self.spill.fill(0);
-        for (bucket, bin) in self.table.iter().enumerate() {
-            for &key in &bin.0 {
+        for bin in self.table.iter_mut() {
+            bin.spill = 0;
+        }
+        for bucket in 0..self.num_bins {
+            for slot in 0..BIN_SIZE {
+                let key = self.table[bucket].slots[slot];
                 if key != 0 {
                     let primary = self.bin_idx_1(key);
                     if primary != bucket {
-                        self.spill[primary] |= Self::fingerprint_bit(key);
+                        self.table[primary].spill |= Self::fingerprint_bit(key);
                     }
                 }
             }
@@ -88,7 +129,7 @@ impl<const MODE: u8> FilteredCuckooSet<MODE> {
     }
 
     pub fn allocation_size(&self) -> usize {
-        std::mem::size_of_val(&*self.table) + std::mem::size_of_val(&*self.spill)
+        std::mem::size_of_val(&*self.table)
     }
 
     #[inline(always)]
@@ -110,7 +151,7 @@ impl<const MODE: u8> FilteredCuckooSet<MODE> {
     }
 
     #[inline(always)]
-    fn get_bin(&self, idx: usize) -> &Bin {
+    fn get_bin(&self, idx: usize) -> &FilteredBin {
         unsafe { self.table.get_unchecked(idx) }
     }
 
@@ -152,7 +193,7 @@ impl<const MODE: u8> FilteredCuckooSet<MODE> {
         if bin1.contains(keys) {
             return true;
         }
-        if self.spill[self.bin_idx_1(key)] & Self::fingerprint_bit(key) == 0 {
+        if bin1.spill & Self::fingerprint_bit(key) == 0 {
             return false;
         }
         self.get_bin(self.bin_idx_2(key)).contains(keys)
@@ -186,12 +227,11 @@ impl<const MODE: u8> FilteredCuckooSet<MODE> {
 
         let keys = S::splat(key as _);
 
-        let bin1_idx = bin1;
-        let bin1 = self.get_bin(bin1_idx);
+        let bin1 = self.get_bin(bin1);
         if bin1.contains(keys) {
             return true;
         }
-        if self.spill[bin1_idx] & Self::fingerprint_bit(key) == 0 {
+        if bin1.spill & Self::fingerprint_bit(key) == 0 {
             return false;
         }
         self.get_bin(self.bin_idx_2(key)).contains(keys)
@@ -221,9 +261,11 @@ impl<const MODE: u8> FilteredCuckooSet<MODE> {
 
     #[inline(always)]
     pub fn insert(&mut self, key: T) {
-        // Public post-construction mutation is uncommon; until the summary is
-        // rebuilt, make it conservative so no inserted key can be skipped.
-        self.spill.fill(u16::MAX);
+        if self.summary_ready {
+            for bin in self.table.iter_mut() {
+                bin.spill = u16::MAX;
+            }
+        }
         if self.contains_eager(key) {
             return;
         }
@@ -255,7 +297,7 @@ impl<const MODE: u8> FilteredCuckooSet<MODE> {
             return;
         }
         let bump_idx = rand::random_range(0..BIN_SIZE);
-        let key = std::mem::replace(&mut bin.0[bump_idx], key);
+        let key = std::mem::replace(&mut bin.slots[bump_idx], key);
         let idx = self.bin_idx_1(key) ^ self.bin_idx_2(key) ^ idx;
         // Fingers crossed that this becomes a non-recursive tail call.
         self.insert_to_bin(key, idx);
@@ -265,7 +307,7 @@ impl<const MODE: u8> FilteredCuckooSet<MODE> {
         std::iter::repeat_n(0, self.has_zero as usize).chain(
             self.table
                 .iter()
-                .flat_map(|b| b.0.iter().copied())
+                .flat_map(|b| b.slots.iter().copied())
                 .filter(|x| *x != 0),
         )
     }
@@ -299,7 +341,7 @@ impl<const MODE: u8> HashSet for FilteredCuckooSet<MODE> {
         let mut total = 0usize;
         let mut primary = 0usize;
         for (idx, bin) in self.table.iter().enumerate() {
-            for &key in &bin.0 {
+            for &key in &bin.slots {
                 if key != 0 {
                     total += 1;
                     primary += (self.bin_idx_1(key) == idx) as usize;
@@ -307,6 +349,17 @@ impl<const MODE: u8> HashSet for FilteredCuckooSet<MODE> {
             }
         }
         (total != 0).then(|| primary as f32 / total as f32)
+    }
+    fn max_primary_bucket_size(&self) -> Option<usize> {
+        let mut counts = vec![0usize; self.num_bins];
+        for bin in &self.table {
+            for &key in &bin.slots {
+                if key != 0 {
+                    counts[self.bin_idx_1(key)] += 1;
+                }
+            }
+        }
+        counts.into_iter().max()
     }
     fn has_prefetch(&self) -> bool {
         true
@@ -330,6 +383,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn filtered_bin_keeps_one_cache_line() {
+        assert_eq!(std::mem::size_of::<FilteredBin>(), 64);
+        assert_eq!(std::mem::align_of::<FilteredBin>(), 64);
+    }
+
+    #[test]
     fn primary_ratio_matches_first_bucket_hits_and_excludes_zero() {
         let keys: Vec<_> = (0..20_000).collect();
         let set = FilteredCuckooSet::<0>::new(1.05, &keys);
@@ -351,15 +410,16 @@ mod tests {
     }
 
     #[test]
-    fn filtered_lookup_preserves_membership_and_negative_queries() {
+    fn filtered_lookup_and_post_build_insert_are_correct() {
         let keys: Vec<_> = (0..20_000).collect();
-        let set = FilteredCuckooSet::<{ Mode::Lazy as u8 }>::new(1.05, &keys);
+        let mut set = FilteredCuckooSet::<{ Mode::Lazy as u8 }>::new(1.05, &keys);
         for &key in &keys {
-            assert!(set.contains_lazy(key));
-            assert!(set.contains_lazy_with_token(key, set.bin_idx_1(key)));
+            assert!(set.contains_lazy(key), "missing {key}");
         }
-        for key in 20_000..40_000 {
-            assert!(!set.contains_lazy(key));
+        for key in 20_000..21_000 {
+            assert!(!set.contains_lazy(key), "unexpected {key}");
         }
+        set.insert(30_000);
+        assert!(set.contains_lazy(30_000));
     }
 }

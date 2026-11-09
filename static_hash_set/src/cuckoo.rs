@@ -279,6 +279,17 @@ impl<const MODE: u8> HashSet for CuckooSet<MODE> {
         }
         (total != 0).then(|| primary as f32 / total as f32)
     }
+    fn max_primary_bucket_size(&self) -> Option<usize> {
+        let mut counts = vec![0usize; self.num_bins];
+        for bin in &self.table {
+            for &key in &bin.0 {
+                if key != 0 {
+                    counts[self.bin_idx_1(key)] += 1;
+                }
+            }
+        }
+        counts.into_iter().max()
+    }
     fn has_prefetch(&self) -> bool {
         true
     }

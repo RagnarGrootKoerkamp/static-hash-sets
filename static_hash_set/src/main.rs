@@ -3,7 +3,10 @@
 mod bin;
 mod braided_cuckoo;
 mod cuckoo;
+mod cuckoo_filtered;
+mod cuckoo_inline_filters;
 mod cuckoo_quotienting;
+mod cuckoo_spill;
 #[cfg(feature = "extc")]
 mod ekphf;
 #[cfg(feature = "bench")]
@@ -26,15 +29,18 @@ mod u64_hashset;
 
 use std::{cell::RefCell, hint::black_box};
 
-use cuckoo::{CuckooSet, Mode};
-use cuckoo_quotienting::CuckooSet as CuckooQuotientSet;
 use braided_cuckoo::BraidedCuckooSet;
+use cuckoo::{CuckooSet, Mode};
+use cuckoo_filtered::FilteredCuckooSet;
+use cuckoo_inline_filters::InlineFilterCuckooSet;
+use cuckoo_quotienting::CuckooSet as CuckooQuotientSet;
+use cuckoo_spill::SpillCuckooSet;
 #[cfg(feature = "extc")]
 use engineering_kphf::{Hd8Set, Tbb84pSet, Tbb85Set};
 #[cfg(feature = "bench")]
 use fph_table::FphDynSet;
 #[cfg(feature = "kphf")]
-use kphf::{self, space_lower_bound, KptrHash};
+use kphf::{self, KptrHash, space_lower_bound};
 use kphf_set::KphfSet;
 use mock_hashset::MockHashSet;
 use phf_set::PhfSet;
@@ -70,8 +76,13 @@ fn quick_bench() -> bool {
     std::env::args().any(|arg| arg == "--quick")
 }
 
-fn cuckoo_only() -> bool {
-    std::env::args().any(|arg| arg == "--cuckoo-only")
+fn implementation_selected(name: &str) -> bool {
+    let args: Vec<_> = std::env::args().collect();
+    let Some(index) = args.iter().position(|arg| arg == "--only") else {
+        return true;
+    };
+    args.get(index + 1)
+        .is_some_and(|names| names.split(',').any(|selected| selected == name))
 }
 
 fn main() {
@@ -79,9 +90,27 @@ fn main() {
     let growth = if quick { 1.4f64 } else { 1.2f64 };
     let max_n = if quick { 10_000_000 } else { 1_000_000_000 };
     let args = std::env::args().collect::<Vec<_>>();
-    let fixed_n = args.windows(2).find(|pair| pair[0] == "--n")
-        .map(|pair| pair[1].parse::<usize>().expect("--n requires a positive integer"));
-    let ns = if let Some(n) = fixed_n {
+    let ns_list = args.windows(2).find(|pair| pair[0] == "--ns").map(|pair| {
+        pair[1]
+            .split(',')
+            .map(|n| {
+                n.parse::<usize>()
+                    .expect("--ns values must be positive integers")
+            })
+            .collect::<Vec<_>>()
+    });
+    let fixed_n = args.windows(2).find(|pair| pair[0] == "--n").map(|pair| {
+        pair[1]
+            .parse::<usize>()
+            .expect("--n requires a positive integer")
+    });
+    let ns = if let Some(ns) = ns_list {
+        assert!(
+            !ns.is_empty() && ns.iter().all(|&n| n > 0),
+            "--ns values must be positive"
+        );
+        ns
+    } else if let Some(n) = fixed_n {
         assert!(n > 0, "--n must be positive");
         vec![n]
     } else {
@@ -91,11 +120,13 @@ fn main() {
             .collect::<Vec<_>>()
     };
 
-    let hashers = vec![
+    let mut hashers = vec![
         // Mock throughput hashset
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                if cuckoo_only() { return None; }
+                if !implementation_selected("mock") {
+                    return None;
+                }
                 Some(Box::new(MockHashSet::new(1.0 / alpha, keys)))
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![1.0],
@@ -103,7 +134,9 @@ fn main() {
         // k-PHF-set
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                if cuckoo_only() { return None; }
+                if !implementation_selected("kphf") {
+                    return None;
+                }
                 Some(Box::new(KphfSet::<
                     KptrHash<{ kphf::Mode::SortBump as u8 }, BIN_SIZE>,
                     BIN_SIZE,
@@ -122,7 +155,9 @@ fn main() {
         // PtrHash
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                if cuckoo_only() { return None; }
+                if !implementation_selected("ptrhash") {
+                    return None;
+                }
                 Some(Box::new(PhfSet::<phf_trait::PtrHash>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![0.99],
@@ -130,20 +165,26 @@ fn main() {
         // non-minimal PHast
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                if cuckoo_only() { return None; }
+                if !implementation_selected("phast") {
+                    return None;
+                }
                 Some(Box::new(PhfSet::<phf_trait::PHast>::new(0.0, 0.0, keys)) as Box<dyn HashSet>)
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             vec![0.98],
         ),
         // SwissTable
         (
-            |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
-                if cuckoo_only() { return None; }
-                Some(Box::new(
-                    hashbrown::HashSet::<T, gxhash::GxBuildHasher>::from_iter(keys.iter().cloned()),
-                ))
+            |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
+                if !implementation_selected("hashbrown") && !implementation_selected("swisstable") {
+                    return None;
+                }
+                let set =
+                    hashbrown::HashSet::<T, gxhash::GxBuildHasher>::from_iter(keys.iter().copied());
+                Some(Box::new(set))
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
-            vec![0.5],
+            // This existing constructor uses Hashbrown's default capacity policy;
+            // its actual occupancy is measured from len/capacity.
+            vec![0.7],
         ),
         // // U64HashSet
         // (
@@ -154,16 +195,32 @@ fn main() {
         // Static braided cuckoo (power-of-two layers, at least 10% slack).
         (
             |_alpha: f32, keys: &[T]| {
+                if !implementation_selected("braided-eager") {
+                    return None;
+                }
                 let set = BraidedCuckooSet::<{ Mode::Eager as u8 }>::try_new(keys);
-                if set.is_none() { eprintln!("BraidedCuckooSet<Eager>: placement failed for n={}", keys.len()); }
+                if set.is_none() {
+                    eprintln!(
+                        "BraidedCuckooSet<Eager>: placement failed for n={}",
+                        keys.len()
+                    );
+                }
                 Some(Box::new(set?))
             },
             vec![0.9],
         ),
         (
             |_alpha: f32, keys: &[T]| {
+                if !implementation_selected("braided-lazy") {
+                    return None;
+                }
                 let set = BraidedCuckooSet::<{ Mode::Lazy as u8 }>::try_new(keys);
-                if set.is_none() { eprintln!("BraidedCuckooSet<Lazy>: placement failed for n={}", keys.len()); }
+                if set.is_none() {
+                    eprintln!(
+                        "BraidedCuckooSet<Lazy>: placement failed for n={}",
+                        keys.len()
+                    );
+                }
                 Some(Box::new(set?))
             },
             vec![0.9],
@@ -171,75 +228,203 @@ fn main() {
         // Eager Cuckoo
         (
             |alpha: f32, keys: &[T]| {
+                if !implementation_selected("cuckoo-eager") {
+                    return None;
+                }
                 Some(Box::new(CuckooSet::<{ Mode::Eager as u8 }>::new(
                     1. / alpha,
                     keys,
                 )))
             },
-            vec![0.99],
+            vec![0.7, 0.9],
         ),
         // Lazy Cuckoo
         (
             |alpha: f32, keys: &[T]| {
+                if !implementation_selected("cuckoo-lazy") {
+                    return None;
+                }
                 Some(Box::new(CuckooSet::<{ Mode::Lazy as u8 }>::new(
                     1. / alpha,
                     keys,
                 )))
             },
-            vec![0.7],
+            vec![0.7, 0.9],
+        ),
+        // Lazy Cuckoo with a 16-bit spill summary.
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("filtered-cuckoo-lazy") {
+                    return None;
+                }
+                Some(Box::new(FilteredCuckooSet::<{ Mode::Lazy as u8 }>::new(
+                    1. / alpha,
+                    keys,
+                )))
+            },
+            vec![0.7, 0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("inline-bloom-cuckoo-lazy") {
+                    return None;
+                }
+                Some(Box::new(
+                    InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, false>::new(1. / alpha, keys),
+                ))
+            },
+            vec![0.7, 0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("inline-onehot-cuckoo-lazy") {
+                    return None;
+                }
+                Some(Box::new(
+                    InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, true, false>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.7, 0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("inline-onehot-all-cuckoo-lazy") {
+                    return None;
+                }
+                Some(Box::new(
+                    InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, true, true>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.7, 0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("inline-bloom-all-cuckoo-lazy") {
+                    return None;
+                }
+                Some(Box::new(
+                    InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, false, true>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.7, 0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("spill-before-miss-u8-lazy") {
+                    return None;
+                }
+                Some(Box::new(
+                    SpillCuckooSet::<{ Mode::Lazy as u8 }, true, 8>::new(1. / alpha, keys),
+                ))
+            },
+            vec![0.7, 0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("spill-after-miss-u8-lazy") {
+                    return None;
+                }
+                Some(Box::new(
+                    SpillCuckooSet::<{ Mode::Lazy as u8 }, false, 8>::new(1. / alpha, keys),
+                ))
+            },
+            vec![0.7, 0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("spill-before-miss-u16-lazy") {
+                    return None;
+                }
+                Some(Box::new(
+                    SpillCuckooSet::<{ Mode::Lazy as u8 }, true, 16>::new(1. / alpha, keys),
+                ))
+            },
+            vec![0.7, 0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("spill-after-miss-u16-lazy") {
+                    return None;
+                }
+                Some(Box::new(
+                    SpillCuckooSet::<{ Mode::Lazy as u8 }, false, 16>::new(1. / alpha, keys),
+                ))
+            },
+            vec![0.7, 0.9],
         ),
         // Promising prefix filters: compare SIMD widths at the same occupancies.
         (
             |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooQuotientSet::<{ Mode::Eager as u8 }, 8, true>::new(
-                    1. / alpha,
-                    keys,
-                )))
+                if !implementation_selected("quotient-eager-8") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 8, true>::new(1. / alpha, keys),
+                ))
             },
             vec![0.99],
         ),
         (
             |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8, true>::new(
-                    1. / alpha,
-                    keys,
-                )))
+                if !implementation_selected("quotient-lazy-8") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8, true>::new(1. / alpha, keys),
+                ))
             },
             vec![0.7],
         ),
         (
             |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooQuotientSet::<{ Mode::Eager as u8 }, 16, true>::new(
-                    1. / alpha,
-                    keys,
-                )))
+                if !implementation_selected("quotient-eager-16") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 16, true>::new(1. / alpha, keys),
+                ))
             },
             vec![0.99],
         ),
         (
             |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16, true>::new(
-                    1. / alpha,
-                    keys,
-                )))
+                if !implementation_selected("quotient-lazy-16") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16, true>::new(1. / alpha, keys),
+                ))
             },
             vec![0.7],
         ),
         (
             |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooQuotientSet::<{ Mode::Eager as u8 }, 32, true>::new(
-                    1. / alpha,
-                    keys,
-                )))
+                if !implementation_selected("quotient-eager-32") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 32, true>::new(1. / alpha, keys),
+                ))
             },
             vec![0.99],
         ),
         (
             |alpha: f32, keys: &[T]| {
-                Some(Box::new(CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true>::new(
-                    1. / alpha,
-                    keys,
-                )))
+                if !implementation_selected("quotient-lazy-32") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true>::new(1. / alpha, keys),
+                ))
             },
             vec![0.7],
         ),
@@ -247,7 +432,9 @@ fn main() {
         #[cfg(feature = "extc")]
         (
             |alpha: f32, keys: &[T]| {
-                if cuckoo_only() { return None; }
+                if !implementation_selected("fph") {
+                    return None;
+                }
                 Some(Box::new(FphDynSet::new(alpha, keys)?) as Box<dyn HashSet>)
             },
             vec![0.95],
@@ -256,7 +443,9 @@ fn main() {
         #[cfg(feature = "tpht")]
         (
             |_alpha: f32, keys: &[T]| {
-                if cuckoo_only() { return None; }
+                if !implementation_selected("tpht") {
+                    return None;
+                }
                 Some(Box::new(tpht::Tpht::new(keys)?) as Box<dyn HashSet>)
             },
             vec![0.9],
@@ -266,7 +455,9 @@ fn main() {
         (
             |_alpha: f32, keys: &[T]| {
                 // TinyPtr currently panics during construction on quick-run inputs.
-                if quick_bench() || cuckoo_only() { return None; }
+                if quick_bench() || !implementation_selected("tinyptr") {
+                    return None;
+                }
                 Some(Box::new(tinyptr::TinyPtr::new(keys)?) as Box<dyn HashSet>)
             },
             vec![0.85],
@@ -292,6 +483,28 @@ fn main() {
         //     vec![0.9],
         // ),
     ];
+    if let Some(alphas) = args
+        .windows(2)
+        .find(|pair| pair[0] == "--alphas")
+        .map(|pair| {
+            pair[1]
+                .split(',')
+                .map(|alpha| {
+                    alpha
+                        .parse::<f32>()
+                        .expect("--alphas values must be numbers")
+                })
+                .collect::<Vec<_>>()
+        })
+    {
+        assert!(
+            !alphas.is_empty() && alphas.iter().all(|alpha| *alpha > 0.0 && *alpha < 1.0),
+            "--alphas values must be in (0, 1)"
+        );
+        for (_, configured_alphas) in &mut hashers {
+            *configured_alphas = alphas.clone();
+        }
+    }
     for repeat in 0..REPEATS {
         for &n in &ns {
             let bencher = Bencher::new(n);
@@ -328,6 +541,7 @@ pub struct Result {
     build: f32,
     load_factor: f32,
     primary_hit_ratio: Option<f32>,
+    max_primary_bucket_size: Option<usize>,
     bumped_frac: f32,
     overhead: f32,
     /// Allocated bytes divided by the input's n * sizeof(u64) bytes.
@@ -354,12 +568,20 @@ impl Bencher {
         let (chunks, tail) = keys.as_chunks_mut::<{ 1 << 20 }>();
         chunks.par_iter_mut().for_each(|chunk| {
             rand::fill(chunk);
-            for key in chunk { *key = (*key & cuckoo_quotienting::KEY_MASK).max(1); }
+            for key in chunk {
+                *key = (*key & cuckoo_quotienting::KEY_MASK).max(1);
+            }
         });
         rand::fill(tail);
-        for key in tail { *key = (*key & cuckoo_quotienting::KEY_MASK).max(1); }
+        for key in tail {
+            *key = (*key & cuckoo_quotienting::KEY_MASK).max(1);
+        }
         let query_count = if quick_bench() { 100_000 } else { QUERIES };
-        let thread_count = if quick_bench() { 1 } else { *THREADS.last().unwrap_or(&0) };
+        let thread_count = if quick_bench() {
+            1
+        } else {
+            *THREADS.last().unwrap_or(&0)
+        };
         let mut queries = vec![
             vec![
                 [
@@ -388,7 +610,12 @@ impl Bencher {
                 }
             }
         });
-        Self { n, keys, queries, query_count }
+        Self {
+            n,
+            keys,
+            queries,
+            query_count,
+        }
     }
 
     pub fn bench(
@@ -410,13 +637,16 @@ impl Bencher {
         let memory_ratio = overhead;
         let load_factor = h.load_factor();
         let primary_hit_ratio = h.primary_hit_ratio();
+        let max_primary_bucket_size = h.max_primary_bucket_size();
         eprintln!(
             "Benchmarking {name}: n={}, alpha={load_factor:.3}, memory_ratio={memory_ratio:.3}",
             self.n,
         );
         let pf = h.has_prefetch();
         for &threads in &THREADS {
-            if quick_bench() && threads != 1 { continue; }
+            if quick_bench() && threads != 1 {
+                continue;
+            }
             for metric in MODES {
                 for query_repeat in 0..if quick_bench() { 1 } else { QUERY_REPEATS } {
                     let mut query = [0f32; 5];
@@ -448,7 +678,8 @@ impl Bencher {
                                 }
                             });
                         }
-                        query[qi] = start.elapsed().as_nanos() as f32 / (threads * self.query_count) as f32;
+                        query[qi] =
+                            start.elapsed().as_nanos() as f32 / (threads * self.query_count) as f32;
                     }
                     let result = Result {
                         h: name.to_string(),
@@ -461,6 +692,7 @@ impl Bencher {
                         build,
                         load_factor,
                         primary_hit_ratio,
+                        max_primary_bucket_size,
                         bumped_frac,
                         overhead,
                         memory_ratio,
