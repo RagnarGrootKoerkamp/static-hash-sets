@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-# Run ./plot.py laptop slides && ./plot.py laptop slides mt
-# Output:
-# - kphf-set-laptop-slides.pdf
-# - kphf-set-laptop-slides-mt.pdf
+# Run ./plot.py benchmark.csv
+# Output: kphf-set-benchmark.html (self-contained interactive Plotly figure)
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -11,6 +9,8 @@ import pandas as pd
 import math
 import sys
 from pathlib import Path
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 w = 64
 
@@ -42,6 +42,8 @@ def read_data(name):
     # Preserve support for older CSVs without inventing placement statistics.
     if "primary_hit_ratio" not in data.columns:
         data["primary_hit_ratio"] = float("nan")
+    if "max_primary_bucket_size" not in data.columns:
+        data["max_primary_bucket_size"] = float("nan")
 
     data["h"] = data["h"].map(cleanup_name)
     data = data[~(data["h"] == "FphMetaSet")]
@@ -62,9 +64,12 @@ def read_data(name):
         "kphf_target_bits_per_key",
     ]
 
-    data = data.groupby(group_columns, as_index=False, sort=False)[
-        ["build", "load_factor", "memory_ratio", "primary_hit_ratio", *queries]
-    ].min()
+    aggregations = {
+        column: "min"
+        for column in ["build", "load_factor", "memory_ratio", "primary_hit_ratio", *queries]
+    }
+    aggregations["max_primary_bucket_size"] = "max"
+    data = data.groupby(group_columns, as_index=False, sort=False).agg(aggregations)
 
     return data
 
@@ -80,12 +85,22 @@ cpu_names = {
     "floyd": "Intel Xeon Gold 6530 server",
 }
 
-queries = ["q50"]
+queries = ["q01", "q50", "q99"]
 
 label_color = {
     "HashSet": "red",
     "CuckooSet<Lazy>": "orange",
     "CuckooSet<Eager>": "brown",
+    "FilteredCuckooSet<Lazy>": "forestgreen",
+    "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": "steelblue",
+    "InlineTwoHotCuckooSet<Lazy,AllKeys>": "deepskyblue",
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": "crimson",
+    "InlineOneHotCuckooSet<Lazy,AllKeys>": "darkred",
+    "SpillCuckooSet<Lazy,BeforePrimary,u8>": "purple",
+    "SpillCuckooSet<Lazy,AfterMiss,u8>": "teal",
+    "SpillCuckooSet<Lazy,BeforePrimary,u16>": "darkviolet",
+    "SpillCuckooSet<Lazy,AfterMiss,u16>": "darkcyan",
+    "HashbrownSet": "royalblue",
     "CuckooQuotientSet<Lazy>": "teal",
     "CuckooQuotientSet<Eager>": "navy",
     "CuckooQuotientSet<Lazy,8,SIMD>": "lightseagreen",
@@ -108,7 +123,37 @@ label_color = {
     # "MapEmbed": "brown",
 }
 
+variant_load_colors = {
+    "CuckooSet<Eager>": {0.7: "#0072B2", 0.9: "#56B4E9"},
+    "CuckooSet<Lazy>": {0.7: "#E69F00", 0.9: "#F0D264"},
+    "FilteredCuckooSet<Lazy>": {0.7: "#009E73", 0.9: "#66C2A5"},
+    "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#1F78B4", 0.9: "#80B1D3"},
+    "InlineTwoHotCuckooSet<Lazy,AllKeys>": {0.7: "#6A3D9A", 0.9: "#B291C8"},
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#009E73", 0.9: "#66C2A5"},
+    "InlineOneHotCuckooSet<Lazy,AllKeys>": {0.7: "#CC79A7", 0.9: "#E0B0CF"},
+    "SpillCuckooSet<Lazy,BeforePrimary,u8>": {0.7: "#6b21a8", 0.9: "#c4b5fd"},
+    "SpillCuckooSet<Lazy,AfterMiss,u8>": {0.7: "#0f766e", 0.9: "#5eead4"},
+    "SpillCuckooSet<Lazy,BeforePrimary,u16>": {0.7: "#4c1d95", 0.9: "#ddd6fe"},
+    "SpillCuckooSet<Lazy,AfterMiss,u16>": {0.7: "#115e59", 0.9: "#99f6e4"},
+    "HashbrownSet": {0.7: "#333333", 0.9: "#999999"},
+}
+
+
+def series_color(name, alpha):
+    shades = variant_load_colors.get(name, {})
+    return shades.get(round(alpha, 2), label_color[name])
+
 display_name = {
+    "HashbrownSet": "hashbrown (Rust)",
+    "FilteredCuckooSet<Lazy>": "CuckooSet<Lazy> (inline spill filter)",
+    "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": "Two-hot: bumped keys",
+    "InlineTwoHotCuckooSet<Lazy,AllKeys>": "Two-hot: all primary keys",
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": "One-hot Bloom: bumped keys",
+    "InlineOneHotCuckooSet<Lazy,AllKeys>": "One-hot Bloom: all primary keys",
+    "SpillCuckooSet<Lazy,BeforePrimary,u8>": "Spill u8: before primary",
+    "SpillCuckooSet<Lazy,AfterMiss,u8>": "Spill u8: after primary miss",
+    "SpillCuckooSet<Lazy,BeforePrimary,u16>": "Spill u16: before primary",
+    "SpillCuckooSet<Lazy,AfterMiss,u16>": "Spill u16: after primary miss",
     "CuckooQuotientSet<Lazy,8,SIMD>": "Quotient<Lazy, 8-bit SIMD>",
     "CuckooQuotientSet<Eager,8,SIMD>": "Quotient<Eager, 8-bit SIMD>",
     "CuckooQuotientSet<Lazy,16,SIMD>": "Quotient<Lazy, 16-bit SIMD>",
@@ -175,6 +220,128 @@ def line_style(name):
     return "-"
 
 
+def alpha_marker(alpha):
+    """Distinguish the lower and higher load-factor series in each color."""
+    return "o" if alpha < 0.8 else "s"
+
+
+def plotly_dash(name):
+    style = line_style(name)
+    return {"-": "solid", "--": "dash", ":": "dot"}[style]
+
+
+def interactive_label(name, alpha, subset):
+    def value_range(column):
+        lo, hi = subset[column].min(), subset[column].max()
+        if round(lo, 2) == round(hi, 2):
+            return f"{lo:.2f}"
+        return f"{lo:.2f}–{hi:.2f}"
+
+    label = f"{get_display_name(name)} (α={value_range('load_factor')}; {value_range('memory_ratio')}×"
+    primary = subset["primary_hit_ratio"].dropna() * 100
+    if "Cuckoo" in name and not primary.empty:
+        lo, hi = primary.min(), primary.max()
+        ratio = f"{lo:.1f}%" if round(lo, 1) == round(hi, 1) else f"{lo:.1f}–{hi:.1f}%"
+        label += f"; primary {ratio}"
+    max_bucket = subset["max_primary_bucket_size"].dropna()
+    if "Cuckoo" in name and not max_bucket.empty:
+        lo, hi = int(max_bucket.min()), int(max_bucket.max())
+        bucket = str(lo) if lo == hi else f"{lo}–{hi}"
+        label += f"; max primary bin {bucket} keys"
+    return label + ")"
+
+
+def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs):
+    panel_titles = [title for _ in thread_specs for _ in metric_specs for title in titles]
+    nrows = len(thread_specs) * len(metric_specs)
+    fig = make_subplots(
+        rows=nrows,
+        cols=len(queries),
+        shared_xaxes=True,
+        shared_yaxes="all",
+        subplot_titles=panel_titles,
+        vertical_spacing=min(0.08, 0.3 / max(nrows, 1)),
+        horizontal_spacing=0.045,
+    )
+    all_groups = data.groupby(["h", "alpha"], sort=False)
+    group_items = sorted(
+        all_groups,
+        key=lambda item: (
+            list(label_color).index(item[0][0]) if item[0][0] in label_color else len(label_color),
+            1 - item[0][1],
+        ),
+    )
+    x_ticks = sorted(data["n"].unique())
+
+    row = 0
+    for thread in thread_specs:
+        for metric in metric_specs:
+            row += 1
+            row_data = data[(data["threads"] == thread) & (data["metric"] == metric)]
+            for col, query in enumerate(queries, start=1):
+                for (h, alpha), _ in group_items:
+                    subset = row_data[(row_data["h"] == h) & (row_data["alpha"] == alpha)].sort_values("n")
+                    if subset.empty:
+                        continue
+                    customdata = subset[["load_factor", "memory_ratio", "primary_hit_ratio", "build"]].to_numpy()
+                    fig.add_trace(
+                        go.Scatter(
+                            x=subset["n"],
+                            y=subset[query],
+                            mode="lines+markers",
+                            name=interactive_label(h, alpha, subset),
+                            legendgroup=f"{h}|{alpha}",
+                            showlegend=(row == 1 and col == 1),
+                            line={"color": series_color(h, alpha), "width": width(h, alpha), "dash": plotly_dash(h)},
+                            marker={"symbol": "circle" if alpha_marker(alpha) == "o" else "square", "size": 6},
+                            customdata=customdata,
+                            hovertemplate=(
+                                "n=%{x:,}<br>"
+                                f"{query} cost=%{{y:.2f}} ns/query<br>"
+                                "measured load=%{customdata[0]:.3f}<br>"
+                                "allocation/input=%{customdata[1]:.3f}×<br>"
+                                "primary hits=%{customdata[2]:.1%}<br>"
+                                "build=%{customdata[3]:.2f} ms<extra>%{fullData.name}</extra>"
+                            ),
+                        ),
+                        row=row,
+                        col=col,
+                    )
+                yaxis = "yaxis" if row == 1 and col == 1 else f"yaxis{(row - 1) * len(queries) + col}"
+                if col == 1:
+                    fig.layout[yaxis].update(title_text=f"{metric_name.get(metric, metric)}<br>ns / query", rangemode="tozero")
+                else:
+                    fig.layout[yaxis].update(rangemode="tozero")
+
+    # The benchmark sizes double at each step. Explicit log-space increments
+    # keep every subplot on the same 1M, 2M, 4M, ... axis.
+    fig.update_xaxes(
+        type="log",
+        tickmode="linear",
+        tick0=math.log10(x_ticks[0]),
+        dtick=math.log10(2),
+        tickformat=".0s",
+    )
+    shared_y_max = max(float(data[query].max()) for query in queries) * 1.05
+    fig.update_yaxes(range=[0, shared_y_max])
+    for col in range(1, len(queries) + 1):
+        fig.update_xaxes(title_text="set size n", row=nrows, col=col)
+
+    height = max(760, 330 * nrows + 260)
+    fig.update_layout(
+        title=f"u64 set query cost by positive-query mix ({cpu_name})",
+        template="plotly_white",
+        width=1700,
+        height=height,
+        hovermode="x unified",
+        legend={"title": "Implementation / measured load", "groupclick": "togglegroup", "y": -0.16, "x": 0.5, "xanchor": "center", "yanchor": "top", "orientation": "h"},
+        margin={"l": 90, "r": 40, "t": 100, "b": 260},
+    )
+    output = Path(f"kphf-set-{Path(name).stem}.html")
+    fig.write_html(output, include_plotlyjs=True, full_html=True, auto_open=False, config={"displaylogo": False, "scrollZoom": True})
+    print(output)
+
+
 def build_legend(fig, axes, bbox_y_anchor):
     """Build and add a custom legend to the figure with category headers."""
     handles, labels = axes[0][0].get_legend_handles_labels()
@@ -216,7 +383,11 @@ def build_legend(fig, axes, bbox_y_anchor):
             text.set_fontweight("bold")
 
 
-titles = ["50% positive"]
+titles = [
+    "Mostly negative (1% positive)",
+    "50% positive / 50% negative",
+    "Mostly positive (99% positive)",
+]
 names = sys.argv[1:]
 cpu_override = None
 if "--cpu" in names:
@@ -283,10 +454,10 @@ if "single" in names:
                     ax=ax,
                     estimator=None,
                     errorbar=None,
-                    color=label_color[h],
+                    color=series_color(h, alpha),
                     lw=width(h, alpha),
                     linestyle=line_style(h),
-                    marker="o",
+                    marker=alpha_marker(alpha),
                     markersize=3,
                     label=series_label(h, subset),
                 )
@@ -311,85 +482,8 @@ if "single" in names:
 for name in names:
     data = read_data(name)
     cpu_name = cpu_names.get(cpu_override or name, cpu_override or Path(name).stem)
-    max_threads = max(data["threads"].unique())
-
-    print(name)
-    plt.close()
-
     thread_specs = sorted(data["threads"].unique()) if mt else [1]
-    metric_specs = ["loop", "prefetch2"]
+    metric_specs = [metric for metric in ["loop", "prefetch2"] if metric in data["metric"].unique()]
     if slides:
         thread_specs = [12 if mt else 1]
-
-    nrows = len(thread_specs)
-    ncols = len(metric_specs)
-    figsize = (4 * ncols, 3 * nrows if not slides else 4.5)
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=figsize,
-        sharey="row",
-        sharex=True,
-        squeeze=False,
-    )
-
-    for ri, threads in enumerate(thread_specs):
-        for ci, metric in enumerate(metric_specs):
-            row_data = data[(data["threads"] == threads) & (data["metric"] == metric)]
-            groups = row_data.groupby(["h", "alpha"], sort=False)
-            ax = axes[ri][ci]
-            for (h, alpha), subset in sorted(
-                groups,
-                key=lambda x: (
-                    (
-                        list(label_color).index(x[0][0])
-                        if x[0][0] in label_color
-                        else len(label_color)
-                    ),
-                    1 - x[0][1],
-                ),
-            ):
-                sns.lineplot(
-                    data=subset,
-                    x="n",
-                    y=queries[0],
-                    ax=ax,
-                    estimator=None,
-                    errorbar=None,
-                    color=label_color[h],
-                    lw=width(h, alpha),
-                    linestyle=line_style(h),
-                    marker="o",
-                    markersize=3,
-                    label=series_label(h, subset),
-                )
-            if ri == 0:
-                ax.set_title(metric_name[metric])
-            ax.set_xlabel("n" if ri == nrows - 1 else "")
-            ax.set_xscale("log", base=2)
-            ax.grid(True, which="both", ls="--", lw=0.5)
-            ax.set_ylabel(f"ns / query" if ci == 0 else "")
-            ax.set_ylim(0)
-            ax.legend().remove() if ax.get_legend() else None
-            if slides:
-                ax.set_ylim(0, 6.5 if mt else 30)
-
-    build_legend(fig, axes, -0.02)
-
-    if mt:
-        fig.suptitle(
-            f"Hashset<u64> query throughput (50% positive queries, {cpu_name}, 12 threads)"
-        )
-    else:
-        fig.suptitle(
-            f"Hashset<u64> query throughput (50% positive queries, {cpu_name}, 1 thread)"
-        )
-    fig.tight_layout(rect=[0, 0.05, 1, 1])
-    out = Path(name).stem
-    if slides:
-        out += "-slides"
-        if mt:
-            out += "-mt"
-    fig.savefig(f"kphf-set-{out}.png", bbox_inches="tight", dpi=180)
-    fig.savefig(f"kphf-set-{out}.pdf", bbox_inches="tight")
-    # fig.savefig(f"kphf-set-{name}.svg", bbox_inches="tight")
+    write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs)
