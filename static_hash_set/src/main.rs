@@ -76,6 +76,30 @@ fn quick_bench() -> bool {
     std::env::args().any(|arg| arg == "--quick")
 }
 
+fn selected_threads() -> Vec<usize> {
+    let args: Vec<_> = std::env::args().collect();
+    if let Some(values) = args
+        .windows(2)
+        .find(|pair| pair[0] == "--threads")
+        .map(|pair| {
+            pair[1]
+                .split(',')
+                .map(|value| value.parse::<usize>().expect("--threads values must be integers"))
+                .collect::<Vec<_>>()
+        })
+    {
+        assert!(
+            !values.is_empty() && values.iter().all(|&threads| threads > 0),
+            "--threads values must be positive"
+        );
+        values
+    } else if quick_bench() {
+        vec![1]
+    } else {
+        THREADS.to_vec()
+    }
+}
+
 fn implementation_selected(name: &str) -> bool {
     let args: Vec<_> = std::env::args().collect();
     let Some(index) = args.iter().position(|arg| arg == "--only") else {
@@ -577,11 +601,7 @@ impl Bencher {
             *key = (*key & cuckoo_quotienting::KEY_MASK).max(1);
         }
         let query_count = if quick_bench() { 100_000 } else { QUERIES };
-        let thread_count = if quick_bench() {
-            1
-        } else {
-            *THREADS.last().unwrap_or(&0)
-        };
+        let thread_count = selected_threads().into_iter().max().unwrap_or(1);
         let mut queries = vec![
             vec![
                 [
@@ -643,10 +663,7 @@ impl Bencher {
             self.n,
         );
         let pf = h.has_prefetch();
-        for &threads in &THREADS {
-            if quick_bench() && threads != 1 {
-                continue;
-            }
+        for threads in selected_threads() {
             for metric in MODES {
                 for query_repeat in 0..if quick_bench() { 1 } else { QUERY_REPEATS } {
                     let mut query = [0f32; 5];

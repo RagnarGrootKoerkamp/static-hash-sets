@@ -68,6 +68,7 @@ pub struct InlineFilterCuckooSet<
     const MODE: u8,
     const ONE_HOT: bool,
     const INCLUDE_PRIMARY: bool = false,
+    const BRANCHLESS_SECONDARY: bool = false,
 > {
     pub slot_ratio: f32,
     num_bins: usize,
@@ -77,8 +78,12 @@ pub struct InlineFilterCuckooSet<
     summary_ready: bool,
 }
 
-impl<const MODE: u8, const ONE_HOT: bool, const INCLUDE_PRIMARY: bool>
-    InlineFilterCuckooSet<MODE, ONE_HOT, INCLUDE_PRIMARY>
+impl<
+        const MODE: u8,
+        const ONE_HOT: bool,
+        const INCLUDE_PRIMARY: bool,
+        const BRANCHLESS_SECONDARY: bool,
+    > InlineFilterCuckooSet<MODE, ONE_HOT, INCLUDE_PRIMARY, BRANCHLESS_SECONDARY>
 {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
@@ -142,6 +147,12 @@ impl<const MODE: u8, const ONE_HOT: bool, const INCLUDE_PRIMARY: bool>
             Self::bloom_bits(key)
         };
         summary & bits == bits
+    }
+
+    #[inline(always)]
+    fn choose_secondary(primary: usize, secondary: usize, use_secondary: bool) -> usize {
+        let mask = 0usize.wrapping_sub(use_secondary as usize);
+        (primary & !mask) | (secondary & mask)
     }
 
     fn rebuild_spill(&mut self) {
@@ -224,6 +235,17 @@ impl<const MODE: u8, const ONE_HOT: bool, const INCLUDE_PRIMARY: bool>
 
         let bin_idx = self.bin_idx_1(key);
         let bin1 = self.get_bin(bin_idx);
+        if BRANCHLESS_SECONDARY {
+            let primary_match = bin1.contains(keys);
+            let may_spill = Self::might_spill(bin1.spill, key);
+            let bin2 = self.bin_idx_2(key);
+            let secondary_idx = Self::choose_secondary(
+                bin_idx,
+                bin2,
+                (!primary_match) & may_spill,
+            );
+            return primary_match | self.get_bin(secondary_idx).contains(keys);
+        }
         if INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, key) {
             return false;
         }
@@ -264,7 +286,19 @@ impl<const MODE: u8, const ONE_HOT: bool, const INCLUDE_PRIMARY: bool>
 
         let keys = S::splat(key as _);
 
-        let bin1 = self.get_bin(bin1);
+        let primary_idx = bin1;
+        let bin1 = self.get_bin(primary_idx);
+        if BRANCHLESS_SECONDARY {
+            let primary_match = bin1.contains(keys);
+            let may_spill = Self::might_spill(bin1.spill, key);
+            let bin2 = self.bin_idx_2(key);
+            let secondary_idx = Self::choose_secondary(
+                primary_idx,
+                bin2,
+                (!primary_match) & may_spill,
+            );
+            return primary_match | self.get_bin(secondary_idx).contains(keys);
+        }
         if INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, key) {
             return false;
         }
@@ -360,10 +394,20 @@ impl<const MODE: u8, const ONE_HOT: bool, const INCLUDE_PRIMARY: bool>
     }
 }
 
-impl<const MODE: u8, const ONE_HOT: bool, const INCLUDE_PRIMARY: bool> HashSet
-    for InlineFilterCuckooSet<MODE, ONE_HOT, INCLUDE_PRIMARY>
+impl<
+        const MODE: u8,
+        const ONE_HOT: bool,
+        const INCLUDE_PRIMARY: bool,
+        const BRANCHLESS_SECONDARY: bool,
+    > HashSet for InlineFilterCuckooSet<MODE, ONE_HOT, INCLUDE_PRIMARY, BRANCHLESS_SECONDARY>
 {
     fn name(&self) -> &'static str {
+        if BRANCHLESS_SECONDARY {
+            return match Mode::from(MODE) {
+                Mode::Eager => "InlineOneHotCuckooSet<Eager,BumpedOnly,Branchless>",
+                Mode::Lazy => "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>",
+            };
+        }
         match Mode::from(MODE) {
             Mode::Eager if ONE_HOT && INCLUDE_PRIMARY => "InlineOneHotCuckooSet<Eager,AllKeys>",
             Mode::Lazy if ONE_HOT && INCLUDE_PRIMARY => "InlineOneHotCuckooSet<Lazy,AllKeys>",
@@ -376,7 +420,12 @@ impl<const MODE: u8, const ONE_HOT: bool, const INCLUDE_PRIMARY: bool> HashSet
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = InlineFilterCuckooSet::<MODE, ONE_HOT, INCLUDE_PRIMARY>::new(self.slot_ratio, keys);
+        let h = InlineFilterCuckooSet::<
+            MODE,
+            ONE_HOT,
+            INCLUDE_PRIMARY,
+            BRANCHLESS_SECONDARY,
+        >::new(self.slot_ratio, keys);
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {
