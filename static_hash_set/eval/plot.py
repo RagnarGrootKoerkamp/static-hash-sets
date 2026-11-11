@@ -96,6 +96,7 @@ label_color = {
     "InlineTwoHotCuckooSet<Lazy,AllKeys>": "deepskyblue",
     "InlineOneHotCuckooSet<Lazy,BumpedOnly>": "crimson",
     "InlineOneHotCuckooSet<Lazy,AllKeys>": "darkred",
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>": "mediumpurple",
     "SpillCuckooSet<Lazy,BeforePrimary,u8>": "purple",
     "SpillCuckooSet<Lazy,AfterMiss,u8>": "teal",
     "SpillCuckooSet<Lazy,BeforePrimary,u16>": "darkviolet",
@@ -124,18 +125,22 @@ label_color = {
 }
 
 variant_load_colors = {
-    "CuckooSet<Eager>": {0.7: "#0072B2", 0.9: "#56B4E9"},
-    "CuckooSet<Lazy>": {0.7: "#E69F00", 0.9: "#F0D264"},
+    "CuckooSet<Eager>": {0.7: "#0057FF", 0.9: "#5C91FF"},
+    "CuckooSet<Lazy>": {0.7: "#FF8C00", 0.9: "#FFC266"},
     "FilteredCuckooSet<Lazy>": {0.7: "#009E73", 0.9: "#66C2A5"},
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#1F78B4", 0.9: "#80B1D3"},
     "InlineTwoHotCuckooSet<Lazy,AllKeys>": {0.7: "#6A3D9A", 0.9: "#B291C8"},
-    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#009E73", 0.9: "#66C2A5"},
-    "InlineOneHotCuckooSet<Lazy,AllKeys>": {0.7: "#CC79A7", 0.9: "#E0B0CF"},
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#00C853", 0.9: "#69F0AE"},
+    "InlineOneHotCuckooSet<Lazy,AllKeys>": {0.7: "#B000FF", 0.9: "#D580FF"},
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>": {0.7: "#F50057", 0.9: "#FF6090"},
     "SpillCuckooSet<Lazy,BeforePrimary,u8>": {0.7: "#6b21a8", 0.9: "#c4b5fd"},
     "SpillCuckooSet<Lazy,AfterMiss,u8>": {0.7: "#0f766e", 0.9: "#5eead4"},
     "SpillCuckooSet<Lazy,BeforePrimary,u16>": {0.7: "#4c1d95", 0.9: "#ddd6fe"},
     "SpillCuckooSet<Lazy,AfterMiss,u16>": {0.7: "#115e59", 0.9: "#99f6e4"},
-    "HashbrownSet": {0.7: "#333333", 0.9: "#999999"},
+    "HashbrownSet": {0.7: "#222222", 0.9: "#777777"},
+    "PhfSet<PtrHash>": {0.7: "#FFD600", 0.9: "#FFEB66"},
+    "kPhfSet<kPtrHash>": {0.7: "#00B8D4", 0.9: "#66E3F5"},
+    "MockHashSet": {0.7: "#757575", 0.9: "#BDBDBD"},
 }
 
 
@@ -144,12 +149,15 @@ def series_color(name, alpha):
     return shades.get(round(alpha, 2), label_color[name])
 
 display_name = {
-    "HashbrownSet": "hashbrown (Rust)",
+    "CuckooSet<Eager>": "Cuckoo eager",
+    "CuckooSet<Lazy>": "Cuckoo lazy",
+    "HashbrownSet": "Hashbrown",
     "FilteredCuckooSet<Lazy>": "CuckooSet<Lazy> (inline spill filter)",
-    "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": "Two-hot: bumped keys",
-    "InlineTwoHotCuckooSet<Lazy,AllKeys>": "Two-hot: all primary keys",
-    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": "One-hot Bloom: bumped keys",
-    "InlineOneHotCuckooSet<Lazy,AllKeys>": "One-hot Bloom: all primary keys",
+    "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": "2-hot, bumped",
+    "InlineTwoHotCuckooSet<Lazy,AllKeys>": "2-hot, all keys",
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": "1-hot bumped",
+    "InlineOneHotCuckooSet<Lazy,AllKeys>": "1-hot all keys",
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>": "1-hot bumped, branchless",
     "SpillCuckooSet<Lazy,BeforePrimary,u8>": "Spill u8: before primary",
     "SpillCuckooSet<Lazy,AfterMiss,u8>": "Spill u8: after primary miss",
     "SpillCuckooSet<Lazy,BeforePrimary,u16>": "Spill u16: before primary",
@@ -162,8 +170,9 @@ display_name = {
     "CuckooQuotientSet<Eager,32,SIMD>": "Quotient<Eager, 32-bit SIMD>",
     "FphDynSet": "FPH",
     "PhfSet<PHast+>": "PHF-set<PHast+>",
-    "PhfSet<PtrHash>": "PHF-set<PtrHash>",
-    "kPhfSet<kPtrHash>": "$k$-PHF-set<$k$-PtrHash>",
+    "PhfSet<PtrHash>": "PtrHash",
+    "kPhfSet<kPtrHash>": "k-PtrHash",
+    "MockHashSet": "Mock",
     # "U64HashSet": "magenta",
     # "Hd8Set": "black",
     # "MapEmbed": "brown",
@@ -226,29 +235,32 @@ def alpha_marker(alpha):
 
 
 def plotly_dash(name):
-    style = line_style(name)
-    return {"-": "solid", "--": "dash", ":": "dot"}[style]
+    return "solid"
 
 
 def interactive_label(name, alpha, subset):
-    def value_range(column):
-        lo, hi = subset[column].min(), subset[column].max()
-        if round(lo, 2) == round(hi, 2):
-            return f"{lo:.2f}"
-        return f"{lo:.2f}–{hi:.2f}"
+    def compact_range(column, digits=2):
+        values = subset[column].dropna()
+        if values.empty:
+            return None
+        lo, hi = values.min(), values.max()
+        if round(lo, digits) == round(hi, digits):
+            return f"{lo:.{digits}f}"
+        return f"{lo:.{digits}f}–{hi:.{digits}f}"
 
-    label = f"{get_display_name(name)} (α={value_range('load_factor')}; {value_range('memory_ratio')}×"
+    label = get_display_name(name)
+    measured_alpha = f"{alpha:.2f}" if name == "MockHashSet" else compact_range("load_factor")
+    if measured_alpha is not None:
+        label += f" · α{measured_alpha.lstrip('0')}"
+    space_ratio = compact_range("memory_ratio")
+    if space_ratio is not None:
+        label += f" · space {space_ratio}×"
     primary = subset["primary_hit_ratio"].dropna() * 100
     if "Cuckoo" in name and not primary.empty:
         lo, hi = primary.min(), primary.max()
-        ratio = f"{lo:.1f}%" if round(lo, 1) == round(hi, 1) else f"{lo:.1f}–{hi:.1f}%"
-        label += f"; primary {ratio}"
-    max_bucket = subset["max_primary_bucket_size"].dropna()
-    if "Cuckoo" in name and not max_bucket.empty:
-        lo, hi = int(max_bucket.min()), int(max_bucket.max())
-        bucket = str(lo) if lo == hi else f"{lo}–{hi}"
-        label += f"; max primary bin {bucket} keys"
-    return label + ")"
+        hit_rate = f"{lo:.0f}%" if round(lo) == round(hi) else f"{lo:.0f}–{hi:.0f}%"
+        label += f" · hit {hit_rate}"
+    return label
 
 
 def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs):
@@ -258,10 +270,10 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs):
         rows=nrows,
         cols=len(queries),
         shared_xaxes=True,
-        shared_yaxes="all",
+        shared_yaxes="rows",
         subplot_titles=panel_titles,
-        vertical_spacing=min(0.08, 0.3 / max(nrows, 1)),
-        horizontal_spacing=0.045,
+        vertical_spacing=min(0.045, 0.18 / max(nrows, 1)),
+        horizontal_spacing=0.015,
     )
     all_groups = data.groupby(["h", "alpha"], sort=False)
     group_items = sorted(
@@ -278,12 +290,14 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs):
         for metric in metric_specs:
             row += 1
             row_data = data[(data["threads"] == thread) & (data["metric"] == metric)]
+            row_y_max = max(float(row_data[query].max()) for query in queries) * 1.05
+            for col in range(1, len(queries) + 1):
+                fig.update_yaxes(range=[0, row_y_max], row=row, col=col)
             for col, query in enumerate(queries, start=1):
                 for (h, alpha), _ in group_items:
                     subset = row_data[(row_data["h"] == h) & (row_data["alpha"] == alpha)].sort_values("n")
                     if subset.empty:
                         continue
-                    customdata = subset[["load_factor", "memory_ratio", "primary_hit_ratio", "build"]].to_numpy()
                     fig.add_trace(
                         go.Scatter(
                             x=subset["n"],
@@ -294,22 +308,15 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs):
                             showlegend=(row == 1 and col == 1),
                             line={"color": series_color(h, alpha), "width": width(h, alpha), "dash": plotly_dash(h)},
                             marker={"symbol": "circle" if alpha_marker(alpha) == "o" else "square", "size": 6},
-                            customdata=customdata,
-                            hovertemplate=(
-                                "n=%{x:,}<br>"
-                                f"{query} cost=%{{y:.2f}} ns/query<br>"
-                                "measured load=%{customdata[0]:.3f}<br>"
-                                "allocation/input=%{customdata[1]:.3f}×<br>"
-                                "primary hits=%{customdata[2]:.1%}<br>"
-                                "build=%{customdata[3]:.2f} ms<extra>%{fullData.name}</extra>"
-                            ),
+                            hovertemplate="n=%{x:,}<br>%{y:.2f} ns/query<extra></extra>",
                         ),
                         row=row,
                         col=col,
                     )
                 yaxis = "yaxis" if row == 1 and col == 1 else f"yaxis{(row - 1) * len(queries) + col}"
                 if col == 1:
-                    fig.layout[yaxis].update(title_text=f"{metric_name.get(metric, metric)}<br>ns / query", rangemode="tozero")
+                    thread_label = "1 thread" if thread == 1 else f"{thread} threads"
+                    fig.layout[yaxis].update(title_text=f"{thread_label} · {metric_name.get(metric, metric)}<br>ns / query", rangemode="tozero")
                 else:
                     fig.layout[yaxis].update(rangemode="tozero")
 
@@ -321,21 +328,30 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs):
         tick0=math.log10(x_ticks[0]),
         dtick=math.log10(2),
         tickformat=".0s",
+        showline=True,
+        linewidth=1,
+        linecolor="#000000",
+        mirror=True,
     )
-    shared_y_max = max(float(data[query].max()) for query in queries) * 1.05
-    fig.update_yaxes(range=[0, shared_y_max])
+    fig.update_yaxes(
+        showline=True,
+        linewidth=1,
+        linecolor="#000000",
+        mirror=True,
+    )
     for col in range(1, len(queries) + 1):
         fig.update_xaxes(title_text="set size n", row=nrows, col=col)
 
-    height = max(760, 330 * nrows + 260)
+    height = max(680, 230 * nrows + 180)
     fig.update_layout(
-        title=f"u64 set query cost by positive-query mix ({cpu_name})",
+        title=f"u64 lookup cost ({cpu_name})",
         template="plotly_white",
-        width=1700,
+        width=1125,
         height=height,
-        hovermode="x unified",
-        legend={"title": "Implementation / measured load", "groupclick": "togglegroup", "y": -0.16, "x": 0.5, "xanchor": "center", "yanchor": "top", "orientation": "h"},
-        margin={"l": 90, "r": 40, "t": 100, "b": 260},
+        font={"size": 11},
+        hovermode="closest",
+        legend={"title": "Variant", "font": {"size": 10}, "groupclick": "togglegroup", "y": -0.13, "x": 0.5, "xanchor": "center", "yanchor": "top", "orientation": "h"},
+        margin={"l": 82, "r": 25, "t": 75, "b": 175},
     )
     output = Path(f"kphf-set-{Path(name).stem}.html")
     fig.write_html(output, include_plotlyjs=True, full_html=True, auto_open=False, config={"displaylogo": False, "scrollZoom": True})
@@ -384,9 +400,9 @@ def build_legend(fig, axes, bbox_y_anchor):
 
 
 titles = [
-    "Mostly negative (1% positive)",
-    "50% positive / 50% negative",
-    "Mostly positive (99% positive)",
+    "1% positive",
+    "50% positive",
+    "99% positive",
 ]
 names = sys.argv[1:]
 cpu_override = None
