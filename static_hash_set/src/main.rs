@@ -158,6 +158,7 @@ fn main() {
             vec![1.0],
         ),
         // k-PHF-set
+        #[cfg(feature = "kphf")]
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 if !implementation_selected("kphf") {
@@ -179,6 +180,7 @@ fn main() {
             // vec![0.9],
         ),
         // PtrHash
+        #[cfg(feature = "bench")]
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 if !implementation_selected("ptrhash") {
@@ -189,6 +191,7 @@ fn main() {
             vec![0.99],
         ),
         // non-minimal PHast
+        #[cfg(feature = "bench")]
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 if !implementation_selected("phast") {
@@ -199,6 +202,7 @@ fn main() {
             vec![0.98],
         ),
         // SwissTable
+        #[cfg(feature = "bench")]
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 if !implementation_selected("hashbrown") && !implementation_selected("swisstable") {
@@ -463,14 +467,14 @@ fn main() {
             },
             vec![0.7],
         ),
-        // Compare the same prefix widths without Elias–Fano compression.
+        // Compare the same prefix widths with Elias–Fano compression.
         (
             |alpha: f32, keys: &[T]| {
-                if !implementation_selected("quotient-eager-8-no-ef") {
+                if !implementation_selected("quotient-eager-8-ef") {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 8, true, false>::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 8, true, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -480,11 +484,11 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| {
-                if !implementation_selected("quotient-lazy-8-no-ef") {
+                if !implementation_selected("quotient-lazy-8-ef") {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8, true, false>::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8, true, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -494,11 +498,11 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| {
-                if !implementation_selected("quotient-eager-16-no-ef") {
+                if !implementation_selected("quotient-eager-16-ef") {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 16, true, false>::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 16, true, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -508,11 +512,11 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| {
-                if !implementation_selected("quotient-lazy-16-no-ef") {
+                if !implementation_selected("quotient-lazy-16-ef") {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16, true, false>::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16, true, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -522,11 +526,11 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| {
-                if !implementation_selected("quotient-eager-32-no-ef") {
+                if !implementation_selected("quotient-eager-32-ef") {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 32, true, false>::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 32, true, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -536,11 +540,11 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| {
-                if !implementation_selected("quotient-lazy-32-no-ef") {
+                if !implementation_selected("quotient-lazy-32-ef") {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, false>::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, true>::new(
                         1. / alpha,
                         keys,
                     ),

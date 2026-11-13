@@ -278,7 +278,7 @@ def interactive_label(name, alpha, subset):
     return label
 
 
-def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs):
+def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, output_path=None):
     panel_titles = [title for _ in thread_specs for _ in metric_specs for title in titles]
     nrows = len(thread_specs) * len(metric_specs)
     fig = make_subplots(
@@ -368,7 +368,7 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs):
         legend={"title": "Variant", "font": {"size": 10}, "groupclick": "togglegroup", "y": -0.13, "x": 0.5, "xanchor": "center", "yanchor": "top", "orientation": "h"},
         margin={"l": 82, "r": 25, "t": 75, "b": 175},
     )
-    output = Path(f"kphf-set-{Path(name).stem}.html")
+    output = Path(output_path) if output_path else Path(f"kphf-set-{Path(name).stem}.html")
     fig.write_html(output, include_plotlyjs=True, full_html=True, auto_open=False, config={"displaylogo": False, "scrollZoom": True})
     print(output)
 
@@ -421,9 +421,14 @@ titles = [
 ]
 names = sys.argv[1:]
 cpu_override = None
+output_override = None
 if "--cpu" in names:
     idx = names.index("--cpu")
     cpu_override = names[idx + 1]
+    del names[idx : idx + 2]
+if "--output" in names:
+    idx = names.index("--output")
+    output_override = names[idx + 1]
     del names[idx : idx + 2]
 slides = "slides" in names
 if slides:
@@ -517,4 +522,4 @@ for name in names:
     metric_specs = [metric for metric in ["loop", "prefetch2"] if metric in data["metric"].unique()]
     if slides:
         thread_specs = [12 if mt else 1]
-    write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs)
+    write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, output_override)
