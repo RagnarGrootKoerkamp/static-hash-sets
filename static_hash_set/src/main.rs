@@ -4,6 +4,7 @@ mod bin;
 mod braided_cuckoo;
 mod cuckoo;
 mod cuckoo_filtered;
+mod cuckoo_growable;
 mod cuckoo_inline_filters;
 mod cuckoo_quotienting;
 mod cuckoo_spill;
@@ -32,6 +33,7 @@ use std::{cell::RefCell, hint::black_box};
 use braided_cuckoo::BraidedCuckooSet;
 use cuckoo::{CuckooSet, Mode};
 use cuckoo_filtered::FilteredCuckooSet;
+use cuckoo_growable::GrowableRightCuckooSet;
 use cuckoo_inline_filters::InlineFilterCuckooSet;
 use cuckoo_quotienting::CuckooSet as CuckooQuotientSet;
 use cuckoo_spill::SpillCuckooSet;
@@ -278,6 +280,15 @@ fn main() {
         // Lazy Cuckoo with a 16-bit spill summary.
         (
             |alpha: f32, keys: &[T]| {
+                if !implementation_selected("growable-right-cuckoo") {
+                    return None;
+                }
+                Some(Box::new(GrowableRightCuckooSet::new(1. / alpha, keys)))
+            },
+            vec![0.7, 0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
                 if !implementation_selected("filtered-cuckoo-lazy") {
                     return None;
                 }
@@ -448,6 +459,91 @@ fn main() {
                 }
                 Some(Box::new(
                     CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true>::new(1. / alpha, keys),
+                ))
+            },
+            vec![0.7],
+        ),
+        // Compare the same prefix widths without Elias–Fano compression.
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-eager-8-no-ef") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 8, true, false>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-lazy-8-no-ef") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8, true, false>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.7],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-eager-16-no-ef") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 16, true, false>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-lazy-16-no-ef") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16, true, false>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.7],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-eager-32-no-ef") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 32, true, false>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.99],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-lazy-32-no-ef") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, false>::new(
+                        1. / alpha,
+                        keys,
+                    ),
                 ))
             },
             vec![0.7],

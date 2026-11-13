@@ -6,6 +6,7 @@ mod traits;
 
 pub mod cuckoo;
 pub mod cuckoo_filtered;
+pub mod cuckoo_growable;
 pub mod cuckoo_inline_filters;
 pub mod cuckoo_quotienting;
 pub mod cuckoo_spill;
