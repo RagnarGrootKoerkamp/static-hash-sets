@@ -1,22 +1,22 @@
 sizes := "1000000,1500000,1732500,1819125,2000000,3000000,3465000,3638250,4000000,6000000,6930000,7276500,8000000,12000000,13860000,14553000,16000000,24000000,27720000,29106000,32000000,48000000,55440000,58212000,60000000"
-variants := "mock,hashbrown,inline-onehot-cuckoo-lazy,quotient-lazy-32-onehot,kphf"
+variants := "mock,hashbrown,inline-onehot-cuckoo-lazy,quotient-lazy-32-onehot,ptrhash,kphf"
 remote_repo := "~/git/static-hash-sets-bench-v2/static_hash_set"
 
 # Run the local comparison and refresh its plot. Pass --batch to the binary for batch8/16/32.
 bench:
     cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-hashbrown -- \
         --queries-per-thread 10000000 --ns "{{sizes}}" --threads 1,12 \
-        --only "{{variants}}" --full-width-keys > eval/latest.csv
+        --only "{{variants}}" > eval/latest.csv
     cd eval && python3 plot.py latest.csv mt --cpu laptop --output latest.html
 
 # Run the cluster benchmarks synchronously, fetch the CSV, and refresh the plot.
 bench-hellman:
-    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --output=eval/.latest-hellman-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-hashbrown -- --ns {{sizes}} --threads 1,16,192 --only {{variants}} --full-width-keys --quick --queries-per-thread 1000000 > eval/latest-hellman.csv"'
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --output=eval/.latest-hellman-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,192 --only {{variants}} --quick --queries-per-thread 1000000 > eval/latest-hellman.csv"'
     scp ae-new:{{remote_repo}}/eval/latest-hellman.csv eval/latest-hellman.csv
     cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
 
 bench-floyd:
-    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=floyd --nodes=1 --ntasks=1 --cpus-per-task=128 --exclusive --mem=0 --time=02:00:00 --output=eval/.latest-floyd-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-floyd; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-hashbrown -- --ns {{sizes}} --threads 1,16,128 --only {{variants}} --full-width-keys --quick --queries-per-thread 1000000 > eval/latest-floyd.csv"'
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=floyd --nodes=1 --ntasks=1 --cpus-per-task=128 --exclusive --mem=0 --time=02:00:00 --output=eval/.latest-floyd-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-floyd; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-hashbrown -- --ns {{sizes}} --threads 1,16,128 --quick --queries-per-thread 1000000 > eval/latest-floyd.csv"'
     scp ae-new:{{remote_repo}}/eval/latest-floyd.csv eval/latest-floyd.csv
     cd eval && python3 plot.py latest-floyd.csv mt --cpu floyd --output latest-floyd.html
 
@@ -28,4 +28,4 @@ plot:
 
 bench_one:
     cargo build -r --bin static_hash_set --no-default-features
-    samply record ../target/release/static_hash_set --queries-per-thread 10000000 --ns 60000000 --threads 1 --only inline-onehot-cuckoo-lazy --full-width-keys
+    samply record ../target/release/static_hash_set --queries-per-thread 10000000 --ns 60000000 --threads 1 --only inline-onehot-cuckoo-lazy

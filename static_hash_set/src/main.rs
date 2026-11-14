@@ -650,7 +650,6 @@ pub struct Bencher {
     n: usize,
     keys: Vec<T>,
     query_count: usize,
-    key_mask: T,
     queries: Vec<Vec<[Vec<T>; 5]>>,
 }
 
@@ -688,22 +687,17 @@ thread_local! {
 
 impl Bencher {
     pub fn new(n: usize) -> Self {
-        let key_mask = if std::env::args().any(|arg| arg == "--full-width-keys") {
-            T::MAX
-        } else {
-            cuckoo_quotienting::KEY_MASK
-        };
         let mut keys = vec![0; n];
         let (chunks, tail) = keys.as_chunks_mut::<{ 1 << 20 }>();
         chunks.par_iter_mut().for_each(|chunk| {
             rand::fill(chunk);
             for key in chunk {
-                *key = (*key & key_mask).max(1);
+                *key = (*key).max(1);
             }
         });
         rand::fill(tail);
         for key in tail {
-            *key = (*key & key_mask).max(1);
+            *key = (*key).max(1);
         }
         let args: Vec<_> = std::env::args().collect();
         let query_count = args
@@ -738,7 +732,7 @@ impl Bencher {
                         if rand::random_bool(p) {
                             *x = *keys.choose(rng).unwrap();
                         } else {
-                            *x = (rand::random::<T>() & key_mask).max(1);
+                            *x = rand::random::<T>().max(1);
                         }
                     }
                 }
@@ -749,7 +743,6 @@ impl Bencher {
             keys,
             queries,
             query_count,
-            key_mask,
         }
     }
 
@@ -762,7 +755,6 @@ impl Bencher {
         while sampled < SAMPLES {
             rand::fill(&mut queries);
             for key in queries {
-                let key = key & self.key_mask;
                 if key == 0 || set.contains(key) {
                     continue;
                 }
