@@ -71,11 +71,15 @@ const THREADS: [usize; 2] = [1, 128];
 
 // const THREADS: [usize; 0] = [];
 const PERCENTILES: [f64; 3] = [0.01, 0.5, 0.99];
-const MODES: [&str; 3] = ["loop", "prefetch", "prefetch2"];
+const MODES: [&str; 6] = ["loop", "prefetch", "prefetch2", "batch8", "batch16", "batch32"];
 // const MODES: [&str; 1] = ["prefetch"];
 
 fn quick_bench() -> bool {
     std::env::args().any(|arg| arg == "--quick")
+}
+
+fn batch_bench() -> bool {
+    std::env::args().any(|arg| arg == "--batch")
 }
 
 fn selected_threads() -> Vec<usize> {
@@ -797,9 +801,13 @@ impl Bencher {
             self.n,
         );
         let pf = h.has_prefetch();
+        let batch_enabled = batch_bench() && h.has_batch();
         let negative_filter_pass_ratio = self.negative_filter_pass_ratio(h.as_ref());
         for threads in selected_threads() {
             for metric in MODES {
+                if matches!(metric, "batch8" | "batch16" | "batch32") && !batch_enabled {
+                    continue;
+                }
                 for query_repeat in 0..if quick_bench() { 1 } else { QUERY_REPEATS } {
                     let mut query = [0f32; 5];
                     for (qi, &_p) in PERCENTILES.iter().enumerate() {
@@ -815,6 +823,18 @@ impl Bencher {
                             }
                             "prefetch2" => {
                                 let c = h.count_prefetch2(&qs);
+                                black_box(c);
+                            }
+                            "batch8" => {
+                                let c = h.count_batch(qs, 8);
+                                black_box(c);
+                            }
+                            "batch16" => {
+                                let c = h.count_batch(qs, 16);
+                                black_box(c);
+                            }
+                            "batch32" => {
+                                let c = h.count_batch(qs, 32);
                                 black_box(c);
                             }
                             _ => unreachable!(),

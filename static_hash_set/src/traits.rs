@@ -33,6 +33,9 @@ pub trait HashSet: Send + Sync {
     fn has_prefetch(&self) -> bool {
         false
     }
+    fn has_batch(&self) -> bool {
+        false
+    }
 
     fn contains(&self, key: T) -> bool;
 
@@ -50,6 +53,9 @@ pub trait HashSet: Send + Sync {
         }
         std::hint::black_box(c);
         c
+    }
+    fn count_batch(&self, keys: &[T], _batch_size: usize) -> usize {
+        self.count_loop(keys)
     }
     fn count_prefetch(&self, keys: &[T]) -> usize {
         let lookahead = 32;

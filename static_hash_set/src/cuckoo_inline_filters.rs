@@ -280,6 +280,73 @@ impl<
         }
     }
 
+    /// Look up 8, 16, or 32 keys together, staging primary and secondary accesses.
+    #[inline]
+    pub fn contains_batch<const B: usize>(&self, keys: &[T; B]) -> [bool; B] {
+        assert!(matches!(B, 8 | 16 | 32), "batch size must be 8, 16, or 32");
+        let mut found = [false; B];
+        if self.num_bins == 0 {
+            for i in 0..B {
+                found[i] = keys[i] == 0 && self.has_zero;
+            }
+            return found;
+        }
+
+        let mut hashes = [0u64; B];
+        let mut primary = [0usize; B];
+        for i in 0..B {
+            if keys[i] == 0 {
+                found[i] = self.has_zero;
+            } else {
+                hashes[i] = Self::primary_hash(keys[i]);
+                primary[i] = self.bin_idx_from_hash(hashes[i]);
+            }
+        }
+
+        for i in 0..B {
+            if keys[i] != 0 {
+                prefetch_index::prefetch_index(&self.table, primary[i]);
+            }
+        }
+
+        let mut pending = [0usize; B];
+        let mut pending_len = 0;
+        for i in 0..B {
+            if keys[i] == 0 {
+                continue;
+            }
+            let bin = self.get_bin(primary[i]);
+            let may_spill = Self::might_spill(bin.spill, hashes[i]);
+            if bin.contains(keys[i]) {
+                found[i] = true;
+            } else if may_spill {
+                pending[pending_len] = i;
+                pending_len += 1;
+            }
+        }
+
+        let mut secondary = [0usize; B];
+        for &i in &pending[..pending_len] {
+            secondary[i] = self.bin_idx_2(keys[i]);
+            prefetch_index::prefetch_index(&self.table, secondary[i]);
+        }
+        for &i in &pending[..pending_len] {
+            found[i] = self.get_bin(secondary[i]).contains(keys[i]);
+        }
+        found
+    }
+
+    pub fn count_batches<const B: usize>(&self, keys: &[T]) -> usize {
+        assert!(matches!(B, 8 | 16 | 32), "batch size must be 8, 16, or 32");
+        let mut chunks = keys.chunks_exact(B);
+        let mut count = 0;
+        for chunk in &mut chunks {
+            let batch: &[T; B] = chunk.try_into().unwrap();
+            count += self.contains_batch(batch).iter().filter(|&&found| found).count();
+        }
+        count + chunks.remainder().iter().filter(|&&key| self.contains(key)).count()
+    }
+
     #[inline(always)]
     pub fn contains_lazy_with_token(&self, key: T, token: usize) -> bool {
         if key == 0 {
@@ -465,6 +532,17 @@ impl<
     fn has_prefetch(&self) -> bool {
         true
     }
+    fn has_batch(&self) -> bool {
+        true
+    }
+    fn count_batch(&self, keys: &[T], batch_size: usize) -> usize {
+        match batch_size {
+            8 => self.count_batches::<8>(keys),
+            16 => self.count_batches::<16>(keys),
+            32 => self.count_batches::<32>(keys),
+            _ => panic!("batch size must be 8, 16, or 32"),
+        }
+    }
     #[inline(always)]
     fn prefetch(&self, key: T) -> usize {
         self.prefetch(key)
@@ -567,6 +645,69 @@ mod tests {
         assert_eq!(summary.count_ones() as usize, keys.len());
     }
 
+    fn check_batch<const B: usize, const ONE_HOT: bool>(
+        set: &InlineFilterCuckooSet<{ Mode::Lazy as u8 }, ONE_HOT>,
+    ) {
+        let primary = (1..20_000)
+            .find(|&key| set.get_bin(set.bin_idx_1(key)).contains(key))
+            .unwrap();
+        let secondary = (1..20_000)
+            .find(|&key| !set.get_bin(set.bin_idx_1(key)).contains(key))
+            .unwrap();
+        let queries: [T; B] = std::array::from_fn(|i| match i % 4 {
+            0 => 0,
+            1 => primary,
+            2 => secondary,
+            _ => 20_000 + i as u64,
+        });
+        let expected = queries.map(|key| set.contains_lazy(key));
+        assert_eq!(set.contains_batch(&queries), expected);
+        for block in 0..16 {
+            let queries: [T; B] = std::array::from_fn(|i| {
+                let index = block * B + i;
+                match index % 3 {
+                    0 => (index * 7919 % 20_000) as T,
+                    1 => 20_000 + index as T,
+                    _ => 0,
+                }
+            });
+            assert_eq!(
+                set.contains_batch(&queries),
+                queries.map(|key| set.contains_lazy(key))
+            );
+        }
+    }
 
+    #[test]
+    fn batches_match_scalar_lookup_for_each_filter_and_width() {
+        let keys: Vec<_> = (0..20_000).collect();
+        let mut one_hot = InlineFilterCuckooSet::<1, true>::new(1.05, &keys);
+        check_batch::<8, true>(&one_hot);
+        check_batch::<16, true>(&one_hot);
+        check_batch::<32, true>(&one_hot);
 
+        let two_hot = InlineFilterCuckooSet::<1, false>::new(1.05, &keys);
+        check_batch::<8, false>(&two_hot);
+        check_batch::<16, false>(&two_hot);
+        check_batch::<32, false>(&two_hot);
+
+        one_hot.insert(30_000);
+        let queries = [30_000; 8];
+        assert_eq!(one_hot.contains_batch(&queries), [true; 8]);
+        let queries: Vec<T> = (0..105)
+            .map(|i| if i % 3 == 0 { i } else { 20_000 + i })
+            .collect();
+        let expected = queries.iter().filter(|&&key| one_hot.contains(key)).count();
+        assert_eq!(one_hot.count_batches::<8>(&queries), expected);
+        assert_eq!(one_hot.count_batches::<16>(&queries), expected);
+        assert_eq!(one_hot.count_batches::<32>(&queries), expected);
+    }
+
+    #[test]
+    fn batch_lookup_handles_empty_table_and_zero() {
+        let mut set = InlineFilterCuckooSet::<1, true>::new(1.05, &[]);
+        assert_eq!(set.contains_batch(&[1; 8]), [false; 8]);
+        set.insert(0);
+        assert_eq!(set.contains_batch(&[0; 16]), [true; 16]);
+    }
 }

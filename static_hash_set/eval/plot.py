@@ -4,6 +4,7 @@
 
 import pandas as pd
 import math
+from html import escape
 import sys
 from pathlib import Path
 import plotly.graph_objects as go
@@ -99,7 +100,12 @@ def read_data(name):
 metric_name = {
     "loop": "for loop",
     "prefetch2": "best of prefetching and loop",
+    "batch8": "batch of 8",
+    "batch16": "batch of 16",
+    "batch32": "batch of 32",
 }
+
+batch_dash = {"batch8": "dash", "batch16": "dot", "batch32": "dashdot"}
 
 cpu_names = {
     "laptop": "Intel i7-10750H laptop",
@@ -308,7 +314,13 @@ def interactive_label(name, alpha, subset):
 
 
 def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, output_path=None):
-    panel_titles = [title for _ in thread_specs for _ in metric_specs for title in titles]
+    data = data[~data["h"].str.contains("<Eager", regex=False)]
+    data = data[data["h"] != "CuckooSet<Lazy>"]
+    data = data[~data["h"].str.contains(r"^CuckooQuotientSet<[^,>]+,(?:8|16),", regex=True)]
+    # Keep only the 32-bit one-hot quotienting series in current plots.
+    quotienting = data["h"].str.startswith("CuckooQuotientSet<")
+    data = data[~quotienting | data["h"].str.contains("OneHot", regex=False)]
+    panel_titles = [title for _ in metric_specs for _ in thread_specs for title in titles]
     nrows = len(thread_specs) * len(metric_specs)
     fig = make_subplots(
         rows=nrows,
@@ -330,33 +342,71 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
     x_ticks = sorted(data["n"].unique())
 
     row = 0
-    for thread in thread_specs:
-        for metric in metric_specs:
+    for metric in metric_specs:
+        for thread in thread_specs:
             row += 1
-            row_data = data[(data["threads"] == thread) & (data["metric"] == metric)]
+            trace_metrics = [metric, *batch_dash] if metric == "prefetch2" else [metric]
+            row_data = data[
+                (data["threads"] == thread) & data["metric"].isin(trace_metrics)
+            ]
             row_y_max = max(float(row_data[query].max()) for query in queries) * 1.05
             for col in range(1, len(queries) + 1):
-                fig.update_yaxes(range=[0, row_y_max], row=row, col=col)
+                fig.update_yaxes(range=[0, row_y_max], autorange=False, fixedrange=True, row=row, col=col)
             for col, query in enumerate(queries, start=1):
                 for (h, alpha), _ in group_items:
-                    subset = row_data[(row_data["h"] == h) & (row_data["alpha"] == alpha)].sort_values("n")
-                    if subset.empty:
-                        continue
-                    fig.add_trace(
-                        go.Scatter(
-                            x=subset["n"],
-                            y=subset[query],
-                            mode="lines+markers",
-                            name=interactive_label(h, alpha, subset),
-                            legendgroup=f"{h}|{alpha}",
-                            showlegend=(row == 1 and col == 1),
-                            line={"color": series_color(h, alpha), "width": width(h, alpha), "dash": plotly_dash(h)},
-                            marker={"symbol": "circle" if alpha_marker(alpha) == "o" else "square", "size": 6},
-                            hovertemplate="n=%{x:,}<br>%{y:.2f} ns/query<extra></extra>",
-                        ),
-                        row=row,
-                        col=col,
-                    )
+                    for trace_metric in trace_metrics:
+                        subset = row_data[
+                            (row_data["h"] == h)
+                            & (row_data["alpha"] == alpha)
+                            & (row_data["metric"] == trace_metric)
+                        ].sort_values("n")
+                        if subset.empty:
+                            continue
+                        hover_data = subset[
+                            ["load_factor", "memory_ratio", "primary_hit_ratio"]
+                        ].copy()
+                        if h == "MockHashSet":
+                            hover_data["load_factor"] = alpha
+                        batch_label = (
+                            f" · {metric_name[trace_metric]}"
+                            if trace_metric in batch_dash
+                            else ""
+                        )
+                        hovertemplate = (
+                            f"Method: {escape(get_display_name(h))}{batch_label}"
+                            "<br>n=%{x:,}<br>%{y:.2f} ns/query"
+                        )
+                        if hover_data["load_factor"].notna().any():
+                            hovertemplate += "<br>α=%{customdata[0]:.2f}"
+                        if hover_data["memory_ratio"].notna().any():
+                            hovertemplate += "<br>space=%{customdata[1]:.2f}×"
+                        if "Cuckoo" in h and hover_data["primary_hit_ratio"].notna().any():
+                            hovertemplate += "<br>hit=%{customdata[2]:.0%}"
+                        hovertemplate += "<extra></extra>"
+                        batch_legend = trace_metric in batch_dash and thread == thread_specs[0]
+                        fig.add_trace(
+                            go.Scattergl(
+                                x=subset["n"],
+                                y=subset[query],
+                                customdata=hover_data.to_numpy(),
+                                mode="lines",
+                                name=interactive_label(h, alpha, subset) + batch_label,
+                                legendgroup=(
+                                    f"{h}|{alpha}|{trace_metric}"
+                                    if batch_label
+                                    else f"{h}|{alpha}"
+                                ),
+                                showlegend=bool(col == 1 and (row == 1 or batch_legend)),
+                                line={
+                                    "color": series_color(h, alpha),
+                                    "width": width(h, alpha),
+                                    "dash": batch_dash.get(trace_metric, plotly_dash(h)),
+                                },
+                                hovertemplate=hovertemplate,
+                            ),
+                            row=row,
+                            col=col,
+                        )
                 yaxis = "yaxis" if row == 1 and col == 1 else f"yaxis{(row - 1) * len(queries) + col}"
                 if col == 1:
                     thread_label = "1 thread" if thread == 1 else f"{thread} threads"
@@ -368,6 +418,9 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
     # keep every subplot on the same 1M, 2M, 4M, ... axis.
     fig.update_xaxes(
         type="log",
+        range=[math.log10(x_ticks[0]), math.log10(x_ticks[-1])],
+        autorange=False,
+        fixedrange=True,
         tickmode="linear",
         tick0=math.log10(x_ticks[0]),
         dtick=math.log10(2),
@@ -378,6 +431,7 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
         mirror=True,
     )
     fig.update_yaxes(
+        fixedrange=True,
         showline=True,
         linewidth=1,
         linecolor="#000000",
@@ -394,11 +448,18 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
         height=height,
         font={"size": 11},
         hovermode="closest",
+        uirevision="latest",
         legend={"title": "Variant", "font": {"size": 10}, "groupclick": "togglegroup", "y": -0.13, "x": 0.5, "xanchor": "center", "yanchor": "top", "orientation": "h"},
         margin={"l": 82, "r": 25, "t": 75, "b": 175},
     )
     output = Path(output_path) if output_path else Path(f"kphf-set-{Path(name).stem}.html")
-    fig.write_html(output, include_plotlyjs=True, full_html=True, auto_open=False, config={"displaylogo": False, "scrollZoom": True})
+    fig.write_html(
+        output,
+        include_plotlyjs=True,
+        full_html=True,
+        auto_open=False,
+        config={"displaylogo": False, "scrollZoom": False},
+    )
     print(output)
 
 
