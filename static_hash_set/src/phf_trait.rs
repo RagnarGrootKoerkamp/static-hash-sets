@@ -1,6 +1,6 @@
 #[cfg(feature = "bench")]
 use ph::{phast::compressed_array::CompactFast, GetSize};
-#[cfg(feature = "bench")]
+#[cfg(feature = "bench-ptrhash")]
 use ptr_hash::DefaultPtrHash;
 
 use super::T;
@@ -12,7 +12,7 @@ use super::T;
 /// on top of that, for faster queries:
 /// - single part
 /// - no remapping
-#[cfg(feature = "bench")]
+#[cfg(feature = "bench-ptrhash")]
 pub type PtrHash = ptr_hash::DefaultPtrHash<ptr_hash::hash::Gx>;
 
 pub trait Phf {
@@ -23,7 +23,7 @@ pub trait Phf {
     fn bits_used(&self) -> usize;
 }
 
-#[cfg(feature = "bench")]
+#[cfg(feature = "bench-ptrhash")]
 impl Phf for PtrHash {
     fn name(&self) -> &'static str {
         "PtrHash"

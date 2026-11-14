@@ -61,6 +61,7 @@ def read_data(name):
     data = data[~(data["h"] == "U64HashSet")]
     data = data[~(data["h"] == "TPHT")]
     data = data[~(data["metric"] == "prefetch")]
+    data = data[~data["metric"].isin(["batch8", "batch16", "batch32"])]
 
     queries = ["q01", "q50", "q99"]
     group_columns = [
@@ -167,7 +168,7 @@ variant_load_colors = {
     "GrowableRightCuckooSet": {0.7: "#9C179E", 0.9: "#D18AD4"},
     "FilteredCuckooSet<Lazy>": {0.7: "#009E73", 0.9: "#66C2A5"},
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#1F78B4", 0.9: "#80B1D3"},
-    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#00A6A6", 0.9: "#65DADA"},
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#D81B60", 0.9: "#F48FB1"},
     "InlineOneHotCuckooSet<Lazy,BumpedOnly> v2": {0.7: "#9B00FF", 0.9: "#DC72FF"},
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>": {0.7: "#F50057", 0.9: "#FF6090"},
     "SpillCuckooSet<Lazy,BeforePrimary,u8>": {0.7: "#6b21a8", 0.9: "#c4b5fd"},
@@ -314,12 +315,14 @@ def interactive_label(name, alpha, subset):
 
 
 def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, output_path=None):
+    bumped = data["h"].str.contains("BumpedOnly", regex=False)
+    inline_one_hot = data["h"] == "InlineOneHotCuckooSet<Lazy,BumpedOnly>"
+    data = data[~bumped | inline_one_hot]
     data = data[~data["h"].str.contains("<Eager", regex=False)]
     data = data[data["h"] != "CuckooSet<Lazy>"]
-    data = data[~data["h"].str.contains(r"^CuckooQuotientSet<[^,>]+,(?:8|16),", regex=True)]
-    # Keep only the 32-bit one-hot quotienting series in current plots.
     quotienting = data["h"].str.startswith("CuckooQuotientSet<")
-    data = data[~quotienting | data["h"].str.contains("OneHot", regex=False)]
+    lazy_32_one_hot = data["h"] == "CuckooQuotientSet<Lazy,32,SIMD,OneHot>"
+    data = data[~quotienting | lazy_32_one_hot]
     panel_titles = [title for _ in metric_specs for _ in thread_specs for title in titles]
     nrows = len(thread_specs) * len(metric_specs)
     fig = make_subplots(
@@ -349,7 +352,8 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
             row_data = data[
                 (data["threads"] == thread) & data["metric"].isin(trace_metrics)
             ]
-            row_y_max = max(float(row_data[query].max()) for query in queries) * 1.05
+            visible_row_data = row_data[~row_data["h"].str.startswith("CuckooQuotientSet<")]
+            row_y_max = max(float(visible_row_data[query].max()) for query in queries) * 1.05
             for col in range(1, len(queries) + 1):
                 fig.update_yaxes(range=[0, row_y_max], autorange=False, fixedrange=True, row=row, col=col)
             for col, query in enumerate(queries, start=1):
@@ -390,6 +394,7 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
                                 y=subset[query],
                                 customdata=hover_data.to_numpy(),
                                 mode="lines",
+                                visible=("legendonly" if h.startswith("CuckooQuotientSet<") else True),
                                 name=interactive_label(h, alpha, subset) + batch_label,
                                 legendgroup=(
                                     f"{h}|{alpha}|{trace_metric}"

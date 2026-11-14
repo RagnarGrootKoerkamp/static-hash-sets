@@ -181,7 +181,7 @@ fn main() {
             vec![0.95],
         ),
         // PtrHash
-        #[cfg(feature = "bench")]
+        #[cfg(feature = "bench-ptrhash")]
         (
             |_alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 if !implementation_selected("ptrhash") {

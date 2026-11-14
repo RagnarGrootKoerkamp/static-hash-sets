@@ -11,7 +11,7 @@ bench:
 
 # Run the cluster benchmarks synchronously, fetch the CSV, and refresh the plot.
 bench-hellman:
-    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --output=eval/.latest-hellman-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,192 --only {{variants}} --quick --queries-per-thread 1000000 > eval/latest-hellman.csv"'
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.latest-hellman-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,192 --only {{variants}} --quick --queries-per-thread 1000000 > eval/latest-hellman.csv"'
     scp ae-new:{{remote_repo}}/eval/latest-hellman.csv eval/latest-hellman.csv
     cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
 

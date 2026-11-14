@@ -11,7 +11,8 @@ floyd = []
 
 kphf = ["dep:kphf"]
 bench-hashbrown = ["dep:hashbrown"]
-bench = ["dep:ph", "dep:ptr_hash", "dep:fph-table-sys"]
+bench = ["dep:ph", "dep:fph-table-sys"]
+bench-ptrhash = ["dep:ptr_hash"]
 
 # Enable external rust-based hash set implemenations in the library.
 ext = ["dep:fastbloom", "dep:cuckoofilter"]
