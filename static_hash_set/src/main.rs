@@ -174,11 +174,7 @@ fn main() {
                     keys,
                 )?))
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
-            // vec![0.7, 0.8, 0.9, 0.99],
-            // vec![0.9, 0.99],
-            // vec![0.9, 0.99],
-            vec![0.7, 0.9, 0.95],
-            // vec![0.9],
+            vec![0.95],
         ),
         // PtrHash
         #[cfg(feature = "bench")]
@@ -203,7 +199,7 @@ fn main() {
             vec![0.98],
         ),
         // SwissTable
-        #[cfg(feature = "bench")]
+        #[cfg(feature = "bench-hashbrown")]
         (
             |alpha: f32, keys: &[T]| -> Option<Box<dyn HashSet>> {
                 if !implementation_selected("hashbrown") && !implementation_selected("swisstable") {
@@ -215,7 +211,7 @@ fn main() {
             } as fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
             // This existing constructor uses Hashbrown's default capacity policy;
             // its actual occupancy is measured from len/capacity.
-            vec![0.7],
+            vec![0.9],
         ),
         // // U64HashSet
         // (
@@ -280,7 +276,7 @@ fn main() {
                     keys,
                 )))
             },
-            vec![0.7, 0.9],
+            vec![0.9],
         ),
         // Lazy Cuckoo with a 16-bit spill summary.
         (
@@ -321,41 +317,10 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, true, false>::new(
-                        1. / alpha,
-                        keys,
-                    ),
+                    InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, true>::new(1. / alpha, keys),
                 ))
             },
-            vec![0.7, 0.9],
-        ),
-        (
-            |alpha: f32, keys: &[T]| {
-                if !implementation_selected("inline-onehot-all-cuckoo-lazy") {
-                    return None;
-                }
-                Some(Box::new(
-                    InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, true, true>::new(
-                        1. / alpha,
-                        keys,
-                    ),
-                ))
-            },
-            vec![0.7, 0.9],
-        ),
-        (
-            |alpha: f32, keys: &[T]| {
-                if !implementation_selected("inline-bloom-all-cuckoo-lazy") {
-                    return None;
-                }
-                Some(Box::new(
-                    InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, false, true>::new(
-                        1. / alpha,
-                        keys,
-                    ),
-                ))
-            },
-            vec![0.7, 0.9],
+            vec![0.9],
         ),
         (
             |alpha: f32, keys: &[T]| {
@@ -448,6 +413,20 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-lazy-32-onehot") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, false, true>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
                 if !implementation_selected("quotient-eager-32") {
                     return None;
                 }
@@ -464,20 +443,6 @@ fn main() {
                 }
                 Some(Box::new(
                     CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true>::new(1. / alpha, keys),
-                ))
-            },
-            vec![0.7],
-        ),
-        (
-            |alpha: f32, keys: &[T]| {
-                if !implementation_selected("quotient-lazy-32-onehot") {
-                    return None;
-                }
-                Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, false, true>::new(
-                        1. / alpha,
-                        keys,
-                    ),
                 ))
             },
             vec![0.9],
@@ -579,7 +544,7 @@ fn main() {
                     ),
                 ))
             },
-            vec![0.7],
+            vec![0.9],
         ),
         // FPH
         #[cfg(feature = "extc")]
@@ -722,7 +687,7 @@ impl Bencher {
         let key_mask = if std::env::args().any(|arg| arg == "--full-width-keys") {
             T::MAX
         } else {
-            (1 << 62) - 1
+            cuckoo_quotienting::KEY_MASK
         };
         let mut keys = vec![0; n];
         let (chunks, tail) = keys.as_chunks_mut::<{ 1 << 20 }>();

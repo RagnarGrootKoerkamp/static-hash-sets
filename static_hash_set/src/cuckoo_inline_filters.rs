@@ -8,26 +8,22 @@
 use std::hash::{BuildHasher, BuildHasherDefault};
 
 const BIN_SIZE: usize = 7;
-use crate::S;
 use crate::T;
 use crate::traits::HashSet;
 
 #[repr(C, align(64))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FilteredBin {
-    slots: [T; BIN_SIZE],
     spill: u64,
+    slots: [T; BIN_SIZE],
 }
 
 impl FilteredBin {
     #[inline(always)]
-    fn contains(&self, keys: S) -> bool {
-        let first: S = unsafe {
-            std::mem::transmute([self.slots[0], self.slots[1], self.slots[2], self.slots[3]])
-        };
-        let tail: S =
-            unsafe { std::mem::transmute([self.slots[4], self.slots[5], self.slots[6], 0]) };
-        (first.simd_eq(keys) | tail.simd_eq(keys)).to_bitmask() > 0
+    fn contains(&self, key: T) -> bool {
+        // Lane 0 is the spill summary; only lanes 1..7 hold keys.
+        let lanes: wide::u64x8 = unsafe { std::mem::transmute(*self) };
+        lanes.simd_eq(wide::u64x8::splat(key)).to_bitmask() > 1
     }
     #[inline(always)]
     fn has_zero(&self) -> bool {
@@ -67,7 +63,6 @@ impl Mode {
 pub struct InlineFilterCuckooSet<
     const MODE: u8,
     const ONE_HOT: bool,
-    const INCLUDE_PRIMARY: bool = false,
     const BRANCHLESS_SECONDARY: bool = false,
 > {
     pub slot_ratio: f32,
@@ -79,11 +74,10 @@ pub struct InlineFilterCuckooSet<
 }
 
 impl<
-        const MODE: u8,
-        const ONE_HOT: bool,
-        const INCLUDE_PRIMARY: bool,
-        const BRANCHLESS_SECONDARY: bool,
-    > InlineFilterCuckooSet<MODE, ONE_HOT, INCLUDE_PRIMARY, BRANCHLESS_SECONDARY>
+    const MODE: u8,
+    const ONE_HOT: bool,
+    const BRANCHLESS_SECONDARY: bool,
+> InlineFilterCuckooSet<MODE, ONE_HOT, BRANCHLESS_SECONDARY>
 {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
@@ -162,7 +156,7 @@ impl<
                 if key != 0 {
                     let hash = Self::primary_hash(key);
                     let primary = self.bin_idx_from_hash(hash);
-                    if INCLUDE_PRIMARY || primary != bucket {
+                    if primary != bucket {
                         Self::add_summary(&mut self.table[primary].spill, hash);
                     }
                 }
@@ -211,6 +205,7 @@ impl<
         let hash = Self::primary_hash(key);
         let bin_idx = self.bin_idx_from_hash(hash);
         prefetch_index::prefetch_index(&self.table, bin_idx);
+        // Lazy lookup reuses this hash for both the bin index and spill bits.
         hash as usize
     }
     #[inline(always)]
@@ -239,27 +234,32 @@ impl<
         if key == 0 {
             return self.has_zero;
         }
-        let keys = S::splat(key as _);
+
         let hash = Self::primary_hash(key);
         let bin_idx = self.bin_idx_from_hash(hash);
         let bin1 = self.get_bin(bin_idx);
         if BRANCHLESS_SECONDARY {
-            let primary_match = bin1.contains(keys);
+            let primary_match = bin1.contains(key);
             let may_spill = Self::might_spill(bin1.spill, hash);
             let bin2 = self.bin_idx_2(key);
             let secondary_idx = Self::choose_secondary(bin_idx, bin2, (!primary_match) & may_spill);
-            return primary_match | self.get_bin(secondary_idx).contains(keys);
+            return primary_match | self.get_bin(secondary_idx).contains(key);
         }
-        if INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, hash) {
-            return false;
+        if ONE_HOT {
+            let primary_match = bin1.contains(key);
+            let may_spill = Self::might_spill(bin1.spill, hash);
+            if may_spill {
+                return primary_match | self.get_bin(self.bin_idx_2(key)).contains(key);
+            }
+            return primary_match;
         }
-        if bin1.contains(keys) {
+        if bin1.contains(key) {
             return true;
         }
-        if !INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, hash) {
+        if !Self::might_spill(bin1.spill, hash) {
             return false;
         }
-        self.get_bin(self.bin_idx_2(key)).contains(keys)
+        self.get_bin(self.bin_idx_2(key)).contains(key)
     }
 
     #[inline(always)]
@@ -268,10 +268,8 @@ impl<
             return self.has_zero;
         }
 
-        let keys = S::splat(key as _);
-
-        self.get_bin(self.bin_idx_1(key)).contains(keys)
-            | self.get_bin(self.bin_idx_2(key)).contains(keys)
+        self.get_bin(self.bin_idx_1(key)).contains(key)
+            | self.get_bin(self.bin_idx_2(key)).contains(key)
     }
 
     #[inline(always)]
@@ -287,27 +285,33 @@ impl<
         if key == 0 {
             return self.has_zero;
         }
-        let keys = S::splat(key as _);
+
         let hash = token as u64;
         let primary_idx = self.bin_idx_from_hash(hash);
         let bin1 = self.get_bin(primary_idx);
         if BRANCHLESS_SECONDARY {
-            let primary_match = bin1.contains(keys);
+            let primary_match = bin1.contains(key);
             let may_spill = Self::might_spill(bin1.spill, hash);
             let bin2 = self.bin_idx_2(key);
-            let secondary_idx = Self::choose_secondary(primary_idx, bin2, (!primary_match) & may_spill);
-            return primary_match | self.get_bin(secondary_idx).contains(keys);
+            let secondary_idx =
+                Self::choose_secondary(primary_idx, bin2, (!primary_match) & may_spill);
+            return primary_match | self.get_bin(secondary_idx).contains(key);
         }
-        if INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, hash) {
-            return false;
+        if ONE_HOT {
+            let primary_match = bin1.contains(key);
+            let may_spill = Self::might_spill(bin1.spill, hash);
+            if may_spill {
+                return primary_match | self.get_bin(self.bin_idx_2(key)).contains(key);
+            }
+            return primary_match;
         }
-        if bin1.contains(keys) {
+        if bin1.contains(key) {
             return true;
         }
-        if !INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, hash) {
+        if !Self::might_spill(bin1.spill, hash) {
             return false;
         }
-        self.get_bin(self.bin_idx_2(key)).contains(keys)
+        self.get_bin(self.bin_idx_2(key)).contains(key)
     }
 
     #[inline(always)]
@@ -316,12 +320,10 @@ impl<
             return self.has_zero;
         }
 
-        let keys = S::splat(key as _);
-
         let bin1 = bin >> 32;
         let bin2 = bin as u32 as usize;
 
-        self.get_bin(bin1).contains(keys) | self.get_bin(bin2).contains(keys)
+        self.get_bin(bin1).contains(key) | self.get_bin(bin2).contains(key)
     }
 
     #[inline(always)]
@@ -394,11 +396,10 @@ impl<
 }
 
 impl<
-        const MODE: u8,
-        const ONE_HOT: bool,
-        const INCLUDE_PRIMARY: bool,
-        const BRANCHLESS_SECONDARY: bool,
-    > HashSet for InlineFilterCuckooSet<MODE, ONE_HOT, INCLUDE_PRIMARY, BRANCHLESS_SECONDARY>
+    const MODE: u8,
+    const ONE_HOT: bool,
+    const BRANCHLESS_SECONDARY: bool,
+> HashSet for InlineFilterCuckooSet<MODE, ONE_HOT, BRANCHLESS_SECONDARY>
 {
     fn name(&self) -> &'static str {
         if BRANCHLESS_SECONDARY {
@@ -408,23 +409,17 @@ impl<
             };
         }
         match Mode::from(MODE) {
-            Mode::Eager if ONE_HOT && INCLUDE_PRIMARY => "InlineOneHotCuckooSet<Eager,AllKeys>",
-            Mode::Lazy if ONE_HOT && INCLUDE_PRIMARY => "InlineOneHotCuckooSet<Lazy,AllKeys>",
             Mode::Eager if ONE_HOT => "InlineOneHotCuckooSet<Eager,BumpedOnly>",
             Mode::Lazy if ONE_HOT => "InlineOneHotCuckooSet<Lazy,BumpedOnly>",
-            Mode::Eager if INCLUDE_PRIMARY => "InlineTwoHotCuckooSet<Eager,AllKeys>",
-            Mode::Lazy if INCLUDE_PRIMARY => "InlineTwoHotCuckooSet<Lazy,AllKeys>",
             Mode::Eager => "InlineTwoHotCuckooSet<Eager,BumpedOnly>",
             Mode::Lazy => "InlineTwoHotCuckooSet<Lazy,BumpedOnly>",
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = InlineFilterCuckooSet::<
-            MODE,
-            ONE_HOT,
-            INCLUDE_PRIMARY,
-            BRANCHLESS_SECONDARY,
-        >::new(self.slot_ratio, keys);
+        let h = InlineFilterCuckooSet::<MODE, ONE_HOT, BRANCHLESS_SECONDARY>::new(
+            self.slot_ratio,
+            keys,
+        );
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {
@@ -495,13 +490,27 @@ mod tests {
     }
 
     #[test]
+    fn spill_lane_does_not_count_as_a_key() {
+        let mut bin = FilteredBin {
+            spill: 42,
+            slots: [0; BIN_SIZE],
+        };
+        assert!(!bin.contains(42));
+        for slot in 0..BIN_SIZE {
+            bin.slots[slot] = 42;
+            assert!(bin.contains(42));
+            bin.slots[slot] = 0;
+        }
+    }
+
+    #[test]
     fn primary_ratio_matches_first_bucket_hits_and_excludes_zero() {
         let keys: Vec<_> = (0..20_000).collect();
         let set = InlineFilterCuckooSet::<0, false>::new(1.05, &keys);
         let primary = set
             .iter()
             .filter(|&key| key != 0)
-            .filter(|&key| set.get_bin(set.bin_idx_1(key)).contains(S::splat(key as _)))
+            .filter(|&key| set.get_bin(set.bin_idx_1(key)).contains(key))
             .count();
         assert_eq!(set.primary_hit_ratio(), Some(primary as f32 / 19_999.0));
         assert!(primary < 19_999);
@@ -517,17 +526,13 @@ mod tests {
 
     #[test]
     fn both_inline_filter_variants_lookup_and_insert_correctly() {
-        check::<false, false>();
-        check::<true, false>();
-        check::<true, true>();
-        check::<false, true>();
+        check::<false>();
+        check::<true>();
     }
 
-    fn check<const ONE_HOT: bool, const INCLUDE_PRIMARY: bool>() {
+    fn check<const ONE_HOT: bool>() {
         let keys: Vec<_> = (0..20_000).collect();
-        let mut set = InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, ONE_HOT, INCLUDE_PRIMARY>::new(
-            1.05, &keys,
-        );
+        let mut set = InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, ONE_HOT>::new(1.05, &keys);
         for &key in &keys {
             assert!(set.contains_lazy(key), "missing {key}");
             assert!(
@@ -561,4 +566,7 @@ mod tests {
         }
         assert_eq!(summary.count_ones() as usize, keys.len());
     }
+
+
+
 }

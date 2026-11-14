@@ -2,9 +2,6 @@
 # Run ./plot.py benchmark.csv
 # Output: kphf-set-benchmark.html (self-contained interactive Plotly figure)
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import seaborn as sns
 import pandas as pd
 import math
 import sys
@@ -44,12 +41,19 @@ def read_data(name):
         data["primary_hit_ratio"] = float("nan")
     if "max_primary_bucket_size" not in data.columns:
         data["max_primary_bucket_size"] = float("nan")
-
     if "negative_filter_pass_ratio" not in data.columns:
         data["negative_filter_pass_ratio"] = float("nan")
 
     data["h"] = data["h"].map(cleanup_name)
+    data = data[~data["h"].str.contains("AllKeys", regex=False)]
     data = data[~data["h"].str.contains(r"^CuckooQuotientSet<[^>]*,EF(?:,|>)")]
+    hashbrown = data["h"] == "HashbrownSet"
+    # For these tables capacity() is 7/8 of the allocated slots. The benchmark
+    # CSV reports len()/capacity(), while the legend reports physical occupancy.
+    data.loc[hashbrown & (data["n"] >= 8), "load_factor"] *= 7 / 8
+    # Hashbrown ignores the requested alpha and uses its own capacity policy.
+    # Collapse duplicate requested-alpha traces into its single measured baseline.
+    data.loc[hashbrown, "alpha"] = 0.5
     data = data[~(data["h"] == "FphMetaSet")]
     data = data[~(data["h"] == "MapEmbed")]
     data = data[~(data["h"] == "Hd8Set")]
@@ -76,17 +80,30 @@ def read_data(name):
     aggregations["negative_filter_pass_ratio"] = "mean"
     data = data.groupby(group_columns, as_index=False, sort=False).agg(aggregations)
 
+    # Prefetching can help or hurt. Show the better measured time at each point.
+    lookup_columns = ["h", "pf", "threads", "n", "alpha", "kphf_target_bits_per_key"]
+    loop_costs = {
+        tuple(row[column] for column in lookup_columns): row[queries].to_numpy()
+        for _, row in data[data["metric"] == "loop"].iterrows()
+    }
+    for index, row in data[data["metric"] == "prefetch2"].iterrows():
+        key = tuple(row[column] for column in lookup_columns)
+        if key in loop_costs:
+            data.loc[index, queries] = row[queries].where(
+                row[queries] < loop_costs[key], loop_costs[key]
+            )
+
     return data
 
 
 metric_name = {
     "loop": "for loop",
-    "prefetch2": "with prefetching",
+    "prefetch2": "best of prefetching and loop",
 }
 
 cpu_names = {
     "laptop": "Intel i7-10750H laptop",
-    "diffie": "AMD EPYC Zen 4 9684X server",
+    "hellman": "AMD EPYC Zen 4 9684X server",
     "floyd": "Intel Xeon Gold 6530 server",
 }
 
@@ -99,15 +116,14 @@ label_color = {
     "GrowableRightCuckooSet": "darkmagenta",
     "FilteredCuckooSet<Lazy>": "forestgreen",
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": "steelblue",
-    "InlineTwoHotCuckooSet<Lazy,AllKeys>": "deepskyblue",
     "InlineOneHotCuckooSet<Lazy,BumpedOnly>": "crimson",
-    "InlineOneHotCuckooSet<Lazy,AllKeys>": "darkred",
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly> v2": "#9B00FF",
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>": "mediumpurple",
     "SpillCuckooSet<Lazy,BeforePrimary,u8>": "purple",
     "SpillCuckooSet<Lazy,AfterMiss,u8>": "teal",
     "SpillCuckooSet<Lazy,BeforePrimary,u16>": "darkviolet",
     "SpillCuckooSet<Lazy,AfterMiss,u16>": "darkcyan",
-    "HashbrownSet": "royalblue",
+    "HashbrownSet": "red",
     "CuckooQuotientSet<Lazy>": "teal",
     "CuckooQuotientSet<Eager>": "navy",
     "CuckooQuotientSet<Lazy,8,SIMD>": "lightseagreen",
@@ -139,23 +155,23 @@ label_color = {
 }
 
 variant_load_colors = {
+    "CuckooQuotientSet<Lazy,32,SIMD>": {0.9: "#E000A0"},
     "CuckooSet<Eager>": {0.7: "#0057FF", 0.9: "#5C91FF"},
-    "CuckooSet<Lazy>": {0.7: "#FF8C00", 0.9: "#FFC266"},
+    "CuckooSet<Lazy>": {0.7: "#FFA500", 0.9: "#FFC266"},
     "GrowableRightCuckooSet": {0.7: "#9C179E", 0.9: "#D18AD4"},
     "FilteredCuckooSet<Lazy>": {0.7: "#009E73", 0.9: "#66C2A5"},
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#1F78B4", 0.9: "#80B1D3"},
-    "InlineTwoHotCuckooSet<Lazy,AllKeys>": {0.7: "#6A3D9A", 0.9: "#B291C8"},
-    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#00C853", 0.9: "#69F0AE"},
-    "InlineOneHotCuckooSet<Lazy,AllKeys>": {0.7: "#B000FF", 0.9: "#D580FF"},
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#00A6A6", 0.9: "#65DADA"},
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly> v2": {0.7: "#9B00FF", 0.9: "#DC72FF"},
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>": {0.7: "#F50057", 0.9: "#FF6090"},
     "SpillCuckooSet<Lazy,BeforePrimary,u8>": {0.7: "#6b21a8", 0.9: "#c4b5fd"},
     "SpillCuckooSet<Lazy,AfterMiss,u8>": {0.7: "#0f766e", 0.9: "#5eead4"},
     "SpillCuckooSet<Lazy,BeforePrimary,u16>": {0.7: "#4c1d95", 0.9: "#ddd6fe"},
     "SpillCuckooSet<Lazy,AfterMiss,u16>": {0.7: "#115e59", 0.9: "#99f6e4"},
-    "HashbrownSet": {0.7: "#222222", 0.9: "#777777"},
+    "HashbrownSet": {0.7: "#FF0000", 0.9: "#FF0000"},
     "PhfSet<PtrHash>": {0.7: "#FFD600", 0.9: "#FFEB66"},
-    "kPhfSet<kPtrHash>": {0.7: "#00B8D4", 0.9: "#66E3F5"},
-    "MockHashSet": {0.7: "#757575", 0.9: "#BDBDBD"},
+    "kPhfSet<kPtrHash>": {0.7: "#0000FF", 0.9: "#0000FF", 0.95: "#0000FF"},
+    "MockHashSet": {0.7: "#000000", 0.9: "#000000", 1.0: "#000000"},
 }
 
 
@@ -170,9 +186,8 @@ display_name = {
     "HashbrownSet": "Hashbrown",
     "FilteredCuckooSet<Lazy>": "CuckooSet<Lazy> (inline spill filter)",
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": "2-hot, bumped",
-    "InlineTwoHotCuckooSet<Lazy,AllKeys>": "2-hot, all keys",
     "InlineOneHotCuckooSet<Lazy,BumpedOnly>": "1-hot bumped",
-    "InlineOneHotCuckooSet<Lazy,AllKeys>": "1-hot all keys",
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly> v2": "1-hot bumped v2",
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>": "1-hot bumped, branchless",
     "SpillCuckooSet<Lazy,BeforePrimary,u8>": "Spill u8: before primary",
     "SpillCuckooSet<Lazy,AfterMiss,u8>": "Spill u8: after primary miss",
@@ -457,12 +472,16 @@ if mt:
 if "single" in names:
     names.remove("single")
 
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    import seaborn as sns
+
     plt.close()
 
     metric = "prefetch2"
     threads = 1
 
-    nrows = 3  # One row for each benchmark: laptop, floyd, diffie
+    nrows = 3  # One row for each benchmark: laptop, floyd, hellman
     ncols = len(queries)
     figsize = (10, 3 * nrows)
 
@@ -476,7 +495,7 @@ if "single" in names:
     )
 
     # Load data for all three benchmarks
-    benchmark_names = ["laptop", "floyd", "diffie"]
+    benchmark_names = ["laptop", "floyd", "hellman"]
     benchmark_data = {bname: read_data(bname) for bname in benchmark_names}
 
     for row_idx, bname in enumerate(benchmark_names):
@@ -532,7 +551,9 @@ if "single" in names:
 for name in names:
     data = read_data(name)
     cpu_name = cpu_names.get(cpu_override or name, cpu_override or Path(name).stem)
-    thread_specs = sorted(data["threads"].unique()) if mt else [1]
+    # The 16-thread data remains in the CSV for later analysis, but is omitted
+    # from the current interactive plot at the user's request.
+    thread_specs = [thread for thread in sorted(data["threads"].unique()) if thread != 16] if mt else [1]
     metric_specs = [metric for metric in ["loop", "prefetch2"] if metric in data["metric"].unique()]
     if slides:
         thread_specs = [12 if mt else 1]

@@ -5,12 +5,13 @@ edition = "2024"
 default-run = "static_hash_set"
 
 [features]
-default = ["kphf", "bench", "tpht"]
+default = ["kphf", "bench-hashbrown"]
 diffie = []
 floyd = []
 
 kphf = ["dep:kphf"]
-bench = ["dep:hashbrown", "dep:ph", "dep:ptr_hash", "dep:fph-table-sys"]
+bench-hashbrown = ["dep:hashbrown"]
+bench = ["dep:ph", "dep:ptr_hash", "dep:fph-table-sys"]
 
 # Enable external rust-based hash set implemenations in the library.
 ext = ["dep:fastbloom", "dep:cuckoofilter"]
