@@ -2,7 +2,8 @@
 use static_hash_set::HashSet;
 use std::{hint::black_box, time::Instant};
 type T = u64;
-use static_hash_set::cuckoo_quotienting::KEY_MASK;
+// Older tables in this comparison still require 62-bit keys.
+const KEY_MASK: u64 = (1 << 62) - 1;
 mod cuckoo {
     pub use static_hash_set::cuckoo::Mode;
 }

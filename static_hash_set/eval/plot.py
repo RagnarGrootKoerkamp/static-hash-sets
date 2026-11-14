@@ -49,6 +49,7 @@ def read_data(name):
         data["negative_filter_pass_ratio"] = float("nan")
 
     data["h"] = data["h"].map(cleanup_name)
+    data = data[~data["h"].str.contains(r"^CuckooQuotientSet<[^>]*,EF(?:,|>)")]
     data = data[~(data["h"] == "FphMetaSet")]
     data = data[~(data["h"] == "MapEmbed")]
     data = data[~(data["h"] == "Hd8Set")]
@@ -114,12 +115,14 @@ label_color = {
     "CuckooQuotientSet<Lazy,16,SIMD>": "teal",
     "CuckooQuotientSet<Eager,16,SIMD>": "navy",
     "CuckooQuotientSet<Lazy,32,SIMD>": "darkgreen",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot>": "#00A6A6",
     "CuckooQuotientSet<Eager,32,SIMD>": "steelblue",
     "CuckooQuotientSet<Lazy,8,SIMD,EF>": "#00FFFF",
     "CuckooQuotientSet<Eager,8,SIMD,EF>": "#0080FF",
     "CuckooQuotientSet<Lazy,16,SIMD,EF>": "#00FF66",
     "CuckooQuotientSet<Eager,16,SIMD,EF>": "#CC00FF",
     "CuckooQuotientSet<Lazy,32,SIMD,EF>": "#FFAA00",
+    "CuckooQuotientSet<Lazy,32,SIMD,EF,OneHot>": "#8A2BE2",
     "CuckooQuotientSet<Eager,32,SIMD,EF>": "#FF1744",
     "BraidedCuckooSet<Lazy>": "purple",
     "BraidedCuckooSet<Eager>": "magenta",
@@ -180,12 +183,14 @@ display_name = {
     "CuckooQuotientSet<Lazy,16,SIMD>": "Quotient<Lazy, 16-bit SIMD>",
     "CuckooQuotientSet<Eager,16,SIMD>": "Quotient<Eager, 16-bit SIMD>",
     "CuckooQuotientSet<Lazy,32,SIMD>": "Quotient<Lazy, 32-bit SIMD>",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot>": "Quotient 32 lazy + 1-hot",
     "CuckooQuotientSet<Eager,32,SIMD>": "Quotient<Eager, 32-bit SIMD>",
     "CuckooQuotientSet<Lazy,8,SIMD,EF>": "Quotient 8 lazy + EF",
     "CuckooQuotientSet<Eager,8,SIMD,EF>": "Quotient 8 eager + EF",
     "CuckooQuotientSet<Lazy,16,SIMD,EF>": "Quotient 16 lazy + EF",
     "CuckooQuotientSet<Eager,16,SIMD,EF>": "Quotient 16 eager + EF",
     "CuckooQuotientSet<Lazy,32,SIMD,EF>": "Quotient 32 lazy + EF",
+    "CuckooQuotientSet<Lazy,32,SIMD,EF,OneHot>": "Quotient 32 lazy + EF + 1-hot",
     "CuckooQuotientSet<Eager,32,SIMD,EF>": "Quotient 32 eager + EF",
     "FphDynSet": "FPH",
     "PhfSet<PHast+>": "PHF-set<PHast+>",

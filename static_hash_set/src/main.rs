@@ -105,7 +105,8 @@ fn selected_threads() -> Vec<usize> {
 fn implementation_selected(name: &str) -> bool {
     let args: Vec<_> = std::env::args().collect();
     let Some(index) = args.iter().position(|arg| arg == "--only") else {
-        return true;
+        return !name.starts_with("quotient-")
+            || (name.contains("onehot") && !name.split('-').any(|part| part == "ef"));
     };
     args.get(index + 1)
         .is_some_and(|names| names.split(',').any(|selected| selected == name))
@@ -467,6 +468,20 @@ fn main() {
             },
             vec![0.7],
         ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-lazy-32-onehot") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, false, true>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.9],
+        ),
         // Compare the same prefix widths with Elias–Fano compression.
         (
             |alpha: f32, keys: &[T]| {
@@ -523,6 +538,20 @@ fn main() {
                 ))
             },
             vec![0.7],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-lazy-32-ef-onehot") {
+                    return None;
+                }
+                Some(Box::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, true, true>::new(
+                        1. / alpha,
+                        keys,
+                    ),
+                ))
+            },
+            vec![0.9],
         ),
         (
             |alpha: f32, keys: &[T]| {
@@ -652,6 +681,7 @@ pub struct Bencher {
     n: usize,
     keys: Vec<T>,
     query_count: usize,
+    key_mask: T,
     queries: Vec<Vec<[Vec<T>; 5]>>,
 }
 
@@ -689,19 +719,33 @@ thread_local! {
 
 impl Bencher {
     pub fn new(n: usize) -> Self {
+        let key_mask = if std::env::args().any(|arg| arg == "--full-width-keys") {
+            T::MAX
+        } else {
+            (1 << 62) - 1
+        };
         let mut keys = vec![0; n];
         let (chunks, tail) = keys.as_chunks_mut::<{ 1 << 20 }>();
         chunks.par_iter_mut().for_each(|chunk| {
             rand::fill(chunk);
             for key in chunk {
-                *key = (*key & cuckoo_quotienting::KEY_MASK).max(1);
+                *key = (*key & key_mask).max(1);
             }
         });
         rand::fill(tail);
         for key in tail {
-            *key = (*key & cuckoo_quotienting::KEY_MASK).max(1);
+            *key = (*key & key_mask).max(1);
         }
-        let query_count = if quick_bench() { 100_000 } else { QUERIES };
+        let args: Vec<_> = std::env::args().collect();
+        let query_count = args
+            .windows(2)
+            .find(|pair| pair[0] == "--queries-per-thread")
+            .map(|pair| {
+                let count: usize = pair[1].parse().expect("--queries-per-thread requires an integer");
+                assert!(count > 0, "--queries-per-thread must be positive");
+                count
+            })
+            .unwrap_or_else(|| if quick_bench() { 1_000_000 } else { QUERIES });
         let thread_count = selected_threads().into_iter().max().unwrap_or(1);
         let mut queries = vec![
             vec![
@@ -725,7 +769,7 @@ impl Bencher {
                         if rand::random_bool(p) {
                             *x = *keys.choose(rng).unwrap();
                         } else {
-                            *x = (rand::random::<T>() & cuckoo_quotienting::KEY_MASK).max(1);
+                            *x = (rand::random::<T>() & key_mask).max(1);
                         }
                     }
                 }
@@ -736,6 +780,7 @@ impl Bencher {
             keys,
             queries,
             query_count,
+            key_mask,
         }
     }
 
@@ -748,7 +793,7 @@ impl Bencher {
         while sampled < SAMPLES {
             rand::fill(&mut queries);
             for key in queries {
-                let key = key & cuckoo_quotienting::KEY_MASK;
+                let key = key & self.key_mask;
                 if key == 0 || set.contains(key) {
                     continue;
                 }

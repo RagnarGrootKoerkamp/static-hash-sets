@@ -3,8 +3,7 @@
 //! prefixes followed by bit-packed suffixes. Prefix filtering only selects
 //! candidates: the complete entry is always checked, so membership is exact.
 //!
-//! Keys must be nonzero and fit in 62 bits. The reversible hash also stays in
-//! the 62-bit domain, saving two bits per entry. Out-of-domain lookups return false.
+//! The reversible hash accepts full-width nonzero u64 keys.
 //! Zero keys are rejected. Zero entries pad unused slots; a zero primary encoding
 //! is routed to the secondary bucket, where the location bit makes it nonzero.
 //! `PREFIX` selects 8-, 16-, or 32-bit filtering (0 disables it); `SIMD=false`
@@ -13,6 +12,8 @@
 //! `CuckooSet::<0, 16, true, true>::new(slot_ratio, keys)`. Prefixes and suffixes
 //! hold the low parts; a unary high-part bitmap also records occupancy. EF
 //! buckets support up to 16 entries and are re-sorted on insertion/replacement.
+//! Set the fifth const parameter to `true` for a 1-hot summary of keys placed
+//! in secondary buckets. The summary occupies the last word of each bucket.
 //! Bucket counts may be arbitrary: the high
 //! half of hash*m selects the bucket, and the high bits of its low half form the
 //! quotient. Lookup uses multiplication and shifts, with no integer division.
@@ -22,16 +23,29 @@
 pub use crate::cuckoo::Mode;
 use crate::{T, traits::HashSet};
 
-/// Quotienting accepts nonzero keys in the 62-bit domain.
-pub const KEY_BITS: u32 = 62;
-pub const KEY_MASK: u64 = (1u64 << KEY_BITS) - 1;
+/// Bit width of the reversible hash domain.
+pub const KEY_BITS: u32 = 64;
+pub const KEY_MASK: u64 = u64::MAX >> (64 - KEY_BITS);
 const PADDING_BITS: u32 = 64 - KEY_BITS;
+const SECONDARY_SEED: u64 = 0x9e3779b97f4a7c15;
+const MIX_MULTIPLIER: u64 = 0xbf58476d1ce4e5b9;
+const MIX_INVERSE: u64 = 0x96de1b173f119089;
 
+/// One 64-byte bucket. With P = 0, entries are stored consecutively. Otherwise
+/// the first `slots * P` bits hold slot prefixes, followed by their packed
+/// suffixes in slot order. Elias–Fano stores only each entry's low bits in
+/// that layout and appends a unary bitmap for high bits and occupancy. SIMD
+/// changes how prefixes are compared, not where bits are stored.
 #[derive(Clone)]
 #[repr(align(64))]
-struct PackedBin([u64; 8]);
+struct PackedBin<const P: usize, const SIMD: bool, const FILTER: bool = false>([u64; 8]);
 
-impl PackedBin {
+impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FILTER> {
+    #[inline(always)]
+    fn might_spill(&self, hash: u64) -> bool {
+        self.0[7] & (1u64 << (hash & 63)) != 0
+    }
+
     #[inline(always)]
     fn read(&self, offset: usize, bits: usize) -> u64 {
         if bits == 0 {
@@ -62,7 +76,7 @@ impl PackedBin {
     }
 
     #[inline(always)]
-    fn get<const P: usize>(&self, slot: usize, bits: usize, slots: usize) -> u64 {
+    fn get(&self, slot: usize, bits: usize, slots: usize) -> u64 {
         if P == 0 {
             return self.read(slot * bits, bits);
         }
@@ -70,12 +84,12 @@ impl PackedBin {
         prefix | (self.read(slots * P + slot * (bits - P), bits - P) << P)
     }
 
-    fn set<const P: usize>(&mut self, slot: usize, bits: usize, slots: usize, value: u64) {
+    fn set(&mut self, slot: usize, bits: usize, slots: usize, value: u64) {
         assert_ne!(value, 0, "zero is the empty-entry sentinel");
-        self.write_value::<P>(slot, bits, slots, value);
+        self.write_value(slot, bits, slots, value);
     }
 
-    fn write_value<const P: usize>(&mut self, slot: usize, bits: usize, slots: usize, value: u64) {
+    fn write_value(&mut self, slot: usize, bits: usize, slots: usize, value: u64) {
         if P == 0 {
             self.write(slot * bits, bits, value);
             return;
@@ -85,19 +99,19 @@ impl PackedBin {
     }
 
     #[inline(always)]
-    fn full<const P: usize>(&self, bits: usize, slots: usize) -> bool {
-        self.get::<P>(slots - 1, bits, slots) != 0
+    fn full(&self, bits: usize, slots: usize) -> bool {
+        self.get(slots - 1, bits, slots) != 0
     }
 
-    fn push<const P: usize>(&mut self, value: u64, bits: usize, slots: usize) {
+    fn push(&mut self, value: u64, bits: usize, slots: usize) {
         let slot = (0..slots)
-            .find(|&i| self.get::<P>(i, bits, slots) == 0)
+            .find(|&i| self.get(i, bits, slots) == 0)
             .expect("full bucket");
-        self.set::<P>(slot, bits, slots, value);
+        self.set(slot, bits, slots, value);
     }
 
     #[inline(always)]
-    fn candidates<const P: usize, const SIMD: bool>(&self, value: u64, slots: usize) -> u32 {
+    fn candidates(&self, value: u64, slots: usize) -> u32 {
         let mut mask = 0u32;
         if SIMD {
             // All loads stay inside the cacheline. Lanes beyond `slots` are masked out.
@@ -153,22 +167,17 @@ impl PackedBin {
     }
 
     #[inline(always)]
-    fn contains<const P: usize, const SIMD: bool>(
-        &self,
-        value: u64,
-        bits: usize,
-        slots: usize,
-    ) -> bool {
+    fn contains(&self, value: u64, bits: usize, slots: usize) -> bool {
         if value == 0 {
             return false;
         }
         if P == 0 {
-            return (0..slots).any(|slot| self.get::<0>(slot, bits, slots) == value);
+            return (0..slots).any(|slot| self.get(slot, bits, slots) == value);
         }
-        let mut mask = self.candidates::<P, SIMD>(value, slots);
+        let mut mask = self.candidates(value, slots);
         while mask != 0 {
             let slot = mask.trailing_zeros() as usize;
-            if self.get::<P>(slot, bits, slots) == value {
+            if self.get(slot, bits, slots) == value {
                 return true;
             }
             mask &= mask - 1;
@@ -181,7 +190,7 @@ impl PackedBin {
     }
 
     #[inline(always)]
-    fn get_encoded<const P: usize, const EF: bool>(
+    fn get_encoded<const EF: bool>(
         &self,
         slot: usize,
         bits: usize,
@@ -189,7 +198,7 @@ impl PackedBin {
         low_bits: usize,
     ) -> u64 {
         if !EF {
-            return self.get::<P>(slot, bits, slots);
+            return self.get(slot, bits, slots);
         }
         let mut bitmap = self.bitmap(bits, slots, low_bits);
         if slot >= bitmap.count_ones() as usize {
@@ -199,10 +208,10 @@ impl PackedBin {
             bitmap &= bitmap - 1;
         }
         let high = bitmap.trailing_zeros() as usize - slot;
-        ((high as u64) << low_bits) | self.get::<P>(slot, low_bits, slots)
+        ((high as u64) << low_bits) | self.get(slot, low_bits, slots)
     }
 
-    fn set_encoded<const P: usize, const EF: bool>(
+    fn set_encoded<const EF: bool>(
         &mut self,
         slot: usize,
         bits: usize,
@@ -211,7 +220,7 @@ impl PackedBin {
         value: u64,
     ) {
         if !EF {
-            self.set::<P>(slot, bits, slots, value);
+            self.set(slot, bits, slots, value);
             return;
         }
         assert_ne!(value, 0, "zero is the empty-entry sentinel");
@@ -221,36 +230,35 @@ impl PackedBin {
         let mut entries = [0u64; 16];
         for (i, entry) in entries[..count].iter_mut().enumerate() {
             let high = bitmap.trailing_zeros() as usize - i;
-            *entry = ((high as u64) << low_bits) | self.get::<P>(i, low_bits, slots);
+            *entry = ((high as u64) << low_bits) | self.get(i, low_bits, slots);
             bitmap &= bitmap - 1;
         }
         entries[slot] = value;
         let count = count + (slot == count) as usize;
         entries[..count].sort_unstable();
+        let summary = self.0[7];
         self.0 = [0; 8];
+        if FILTER {
+            self.0[7] = summary;
+        }
         let low_mask = u64::MAX >> (64 - low_bits);
         for (i, &entry) in entries[..count].iter().enumerate() {
-            self.write_value::<P>(i, low_bits, slots, entry & low_mask);
+            self.write_value(i, low_bits, slots, entry & low_mask);
             bitmap |= 1 << ((entry >> low_bits) as usize + i);
         }
         self.write(slots * low_bits, (1 << (bits - low_bits)) + slots, bitmap);
     }
 
     #[inline(always)]
-    fn full_encoded<const P: usize, const EF: bool>(
-        &self,
-        bits: usize,
-        slots: usize,
-        low_bits: usize,
-    ) -> bool {
+    fn full_encoded<const EF: bool>(&self, bits: usize, slots: usize, low_bits: usize) -> bool {
         if EF {
             self.bitmap(bits, slots, low_bits).count_ones() as usize == slots
         } else {
-            self.full::<P>(bits, slots)
+            self.full(bits, slots)
         }
     }
 
-    fn push_encoded<const P: usize, const EF: bool>(
+    fn push_encoded<const EF: bool>(
         &mut self,
         value: u64,
         bits: usize,
@@ -258,15 +266,15 @@ impl PackedBin {
         low_bits: usize,
     ) {
         if !EF {
-            self.push::<P>(value, bits, slots);
+            self.push(value, bits, slots);
             return;
         }
         let count = self.bitmap(bits, slots, low_bits).count_ones() as usize;
-        self.set_encoded::<P, true>(count, bits, slots, low_bits, value);
+        self.set_encoded::<true>(count, bits, slots, low_bits, value);
     }
 
     #[inline(always)]
-    fn contains_encoded<const P: usize, const SIMD: bool, const EF: bool>(
+    fn contains_encoded<const EF: bool>(
         &self,
         value: u64,
         bits: usize,
@@ -274,7 +282,7 @@ impl PackedBin {
         low_bits: usize,
     ) -> bool {
         if !EF {
-            return self.contains::<P, SIMD>(value, bits, slots);
+            return self.contains(value, bits, slots);
         }
         if value == 0 {
             return false;
@@ -284,11 +292,11 @@ impl PackedBin {
         let mut candidates = if P == 0 {
             occupied
         } else {
-            self.candidates::<P, SIMD>(value, slots) & occupied
+            self.candidates(value, slots) & occupied
         };
         while candidates != 0 {
             let slot = candidates.trailing_zeros() as usize;
-            if self.get_encoded::<P, true>(slot, bits, slots, low_bits) == value {
+            if self.get_encoded::<true>(slot, bits, slots, low_bits) == value {
                 return true;
             }
             candidates &= candidates - 1;
@@ -302,23 +310,29 @@ pub struct CuckooSet<
     const PREFIX: usize = 16,
     const SIMD: bool = true,
     const EF: bool = false,
+    const FILTER: bool = false,
 > {
     pub slot_ratio: f32,
     num_bins: usize,
-    table: Box<[PackedBin]>,
+    table: Box<[PackedBin<PREFIX, SIMD, FILTER>]>,
     entry_bits: usize,
     slots: usize,
     low_bits: usize,
     len: usize,
+    summary_ready: bool,
 }
 
-impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
-    CuckooSet<MODE, PREFIX, SIMD, EF>
+impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, const FILTER: bool>
+    CuckooSet<MODE, PREFIX, SIMD, EF, FILTER>
 {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
         for &k in keys {
             this.insert(k);
+        }
+        if FILTER {
+            this.rebuild_spill();
+            this.summary_ready = true;
         }
         this
     }
@@ -338,17 +352,18 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
         Self {
             slot_ratio,
             num_bins,
-            table: vec![PackedBin([0; 8]); num_bins].into_boxed_slice(),
+            table: vec![PackedBin::<PREFIX, SIMD, FILTER>([0; 8]); num_bins].into_boxed_slice(),
             entry_bits,
             slots,
             low_bits,
             len: 0,
+            summary_ready: false,
         }
     }
 
     fn bin_layout(entry_bits: usize) -> (usize, usize) {
         if !EF {
-            return (512 / entry_bits, entry_bits);
+            return ((512 - 64 * FILTER as usize) / entry_bits, entry_bits);
         }
         // At most 16 lanes, matching the existing SIMD prefix filters. Choose
         // floor(log2(2^entry_bits / slots)) low bits, with prefix lanes intact.
@@ -356,7 +371,7 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
             let high_bits = slots.next_power_of_two().ilog2() as usize;
             let low_bits = entry_bits.saturating_sub(high_bits).max(PREFIX);
             let bitmap_bits = (1usize << (entry_bits - low_bits)) + slots;
-            if slots * low_bits + bitmap_bits <= 512 {
+            if slots * low_bits + bitmap_bits <= 512 - 64 * FILTER as usize {
                 return (slots, low_bits);
             }
         }
@@ -365,7 +380,7 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
 
     fn table_layout(capacity: usize) -> (usize, usize, usize, usize) {
         let mut low = 2usize;
-        let mut high = capacity.div_ceil(8).max(2);
+        let mut high = capacity.div_ceil(if FILTER { 7 } else { 8 }).max(2);
         while low < high {
             let mid = low + (high - low) / 2;
             let bits = KEY_BITS as usize + 1 - mid.ilog2() as usize;
@@ -390,24 +405,19 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
         self.len
     }
 
-    // SplitMix-style permutation modulo 2^62. Odd multipliers remain invertible
-    // modulo 2^62; masking each product keeps the permutation in that domain.
+    // One odd multiplication and two reversible xor-shifts mix all key bits.
     #[inline(always)]
     fn permute(key: T, secondary: bool) -> T {
-        // FIXME: Let's drop the multiplications
-        let mut x = (key ^ if secondary { 0x9e3779b97f4a7c15 } else { 0 }) & KEY_MASK;
-        x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9) & KEY_MASK;
-        x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb) & KEY_MASK;
-        x ^ (x >> 31)
+        let x = key ^ if secondary { SECONDARY_SEED } else { 0 };
+        let x = (x ^ (x >> 30)).wrapping_mul(MIX_MULTIPLIER);
+        x ^ (x >> 27)
     }
 
     fn unpermute(mut x: T, secondary: bool) -> T {
-        x ^= (x >> 31) ^ (x >> 62);
-        x = x.wrapping_mul(0x319642b2d24d8ec3) & KEY_MASK;
         x ^= (x >> 27) ^ (x >> 54);
-        x = x.wrapping_mul(0x96de1b173f119089) & KEY_MASK;
+        x = x.wrapping_mul(MIX_INVERSE);
         x ^= (x >> 30) ^ (x >> 60);
-        (x ^ if secondary { 0x9e3779b97f4a7c15 } else { 0 }) & KEY_MASK
+        x ^ if secondary { SECONDARY_SEED } else { 0 }
     }
 
     #[inline(always)]
@@ -429,16 +439,14 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
 
     #[inline(always)]
     fn entry(&self, key: T, secondary: bool) -> u64 {
-        // The scaled hash has two known zero low bits. Valid products are
-        // 4*m apart, so discard floor(log2(m))+2 bits without losing identity.
+        // Drop floor(log2(m)) low bits. Valid products are at least m apart.
         (((self.product(key, secondary) as u64) >> (65 - self.entry_bits)) << 1) | secondary as u64
     }
 
     fn decode(&self, entry: u64, idx: usize) -> T {
         let lower_product =
             ((idx as u128) << 64) | (((entry >> 1) as u128) << (65 - self.entry_bits));
-        // Valid products are multiples of 4*m. The truncated interval is no
-        // wider than 4*m, so round up to its unique valid 62-bit hash value.
+        // Round up to the unique valid product in the truncated interval.
         // Division is used only for iteration/displacement.
         let hash = lower_product.div_ceil((self.num_bins as u128) << PADDING_BITS) as u64;
         Self::unpermute(hash, entry & 1 != 0)
@@ -446,13 +454,35 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
 
     #[inline(always)]
     fn matches(&self, idx: usize, key: T, secondary: bool) -> bool {
-        key <= KEY_MASK
-            && self.table[idx].contains_encoded::<PREFIX, SIMD, EF>(
+        key != 0
+            && self.table[idx].contains_encoded::<EF>(
                 self.entry(key, secondary),
                 self.entry_bits,
                 self.slots,
                 self.low_bits,
             )
+    }
+
+    fn rebuild_spill(&mut self) {
+        for bin in self.table.iter_mut() {
+            bin.0[7] = 0;
+        }
+        for idx in 0..self.num_bins {
+            for slot in 0..self.slots {
+                let entry = self.table[idx].get_encoded::<EF>(
+                    slot,
+                    self.entry_bits,
+                    self.slots,
+                    self.low_bits,
+                );
+                if entry != 0 && entry & 1 != 0 {
+                    let key = self.decode(entry, idx);
+                    let hash = Self::permute(key, false);
+                    let primary = self.bin_idx_1(key);
+                    self.table[primary].0[7] |= 1u64 << (hash & 63);
+                }
+            }
+        }
     }
 
     #[inline(always)]
@@ -501,7 +531,7 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
 
     #[inline(always)]
     pub fn contains_lazy_with_token(&self, key: T, bin1: usize) -> bool {
-        if key > KEY_MASK {
+        if key == 0 {
             return false;
         }
         // A zero primary encoding is always stored in its secondary bucket.
@@ -511,8 +541,10 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
         if self.matches(bin1, key, false) {
             return true;
         }
-        if !self.table[bin1].full_encoded::<PREFIX, EF>(self.entry_bits, self.slots, self.low_bits)
-        {
+        if FILTER && !self.table[bin1].might_spill(Self::permute(key, false)) {
+            return false;
+        }
+        if !self.table[bin1].full_encoded::<EF>(self.entry_bits, self.slots, self.low_bits) {
             return false;
         }
         self.matches(self.bin_idx_2(key), key, true)
@@ -534,9 +566,14 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
     #[inline(always)]
     pub fn insert(&mut self, key: T) {
         assert_ne!(key, 0, "zero keys are not supported");
-        assert!(key <= KEY_MASK, "keys must fit in 62 bits");
         if self.contains_eager(key) {
             return;
+        }
+        if FILTER && self.summary_ready {
+            for bin in self.table.iter_mut() {
+                bin.0[7] = u64::MAX;
+            }
+            self.summary_ready = false;
         }
         for secondary in [false, true] {
             let idx = if secondary {
@@ -548,12 +585,8 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
             if entry == 0 {
                 continue;
             }
-            if !self.table[idx].full_encoded::<PREFIX, EF>(
-                self.entry_bits,
-                self.slots,
-                self.low_bits,
-            ) {
-                self.table[idx].push_encoded::<PREFIX, EF>(
+            if !self.table[idx].full_encoded::<EF>(self.entry_bits, self.slots, self.low_bits) {
+                self.table[idx].push_encoded::<EF>(
                     entry,
                     self.entry_bits,
                     self.slots,
@@ -578,12 +611,8 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
                 secondary = true;
                 continue;
             }
-            if !self.table[idx].full_encoded::<PREFIX, EF>(
-                self.entry_bits,
-                self.slots,
-                self.low_bits,
-            ) {
-                self.table[idx].push_encoded::<PREFIX, EF>(
+            if !self.table[idx].full_encoded::<EF>(self.entry_bits, self.slots, self.low_bits) {
+                self.table[idx].push_encoded::<EF>(
                     entry,
                     self.entry_bits,
                     self.slots,
@@ -593,13 +622,9 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
                 return;
             }
             let slot = rand::random_range(0..self.slots);
-            let displaced = self.table[idx].get_encoded::<PREFIX, EF>(
-                slot,
-                self.entry_bits,
-                self.slots,
-                self.low_bits,
-            );
-            self.table[idx].set_encoded::<PREFIX, EF>(
+            let displaced =
+                self.table[idx].get_encoded::<EF>(slot, self.entry_bits, self.slots, self.low_bits);
+            self.table[idx].set_encoded::<EF>(
                 slot,
                 self.entry_bits,
                 self.slots,
@@ -614,8 +639,7 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
     pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
         self.table.iter().enumerate().flat_map(move |(idx, bin)| {
             (0..self.slots).filter_map(move |slot| {
-                let entry =
-                    bin.get_encoded::<PREFIX, EF>(slot, self.entry_bits, self.slots, self.low_bits);
+                let entry = bin.get_encoded::<EF>(slot, self.entry_bits, self.slots, self.low_bits);
                 (entry != 0).then(|| self.decode(entry, idx))
             })
         })
@@ -628,10 +652,43 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool>
     }
 }
 
-impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool> HashSet
-    for CuckooSet<MODE, PREFIX, SIMD, EF>
+impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, const FILTER: bool>
+    HashSet for CuckooSet<MODE, PREFIX, SIMD, EF, FILTER>
 {
     fn name(&self) -> &'static str {
+        if FILTER {
+            return match (Mode::from(MODE), PREFIX, SIMD, EF) {
+                (Mode::Eager, 0, _, false) => "CuckooQuotientSet<Eager,0,SWAR,OneHot>",
+                (Mode::Eager, 0, _, true) => "CuckooQuotientSet<Eager,0,SWAR,EF,OneHot>",
+                (Mode::Lazy, 0, _, false) => "CuckooQuotientSet<Lazy,0,SWAR,OneHot>",
+                (Mode::Lazy, 0, _, true) => "CuckooQuotientSet<Lazy,0,SWAR,EF,OneHot>",
+                (Mode::Eager, 8, false, false) => "CuckooQuotientSet<Eager,8,SWAR,OneHot>",
+                (Mode::Eager, 8, false, true) => "CuckooQuotientSet<Eager,8,SWAR,EF,OneHot>",
+                (Mode::Lazy, 8, false, false) => "CuckooQuotientSet<Lazy,8,SWAR,OneHot>",
+                (Mode::Lazy, 8, false, true) => "CuckooQuotientSet<Lazy,8,SWAR,EF,OneHot>",
+                (Mode::Eager, 8, true, false) => "CuckooQuotientSet<Eager,8,SIMD,OneHot>",
+                (Mode::Eager, 8, true, true) => "CuckooQuotientSet<Eager,8,SIMD,EF,OneHot>",
+                (Mode::Lazy, 8, true, false) => "CuckooQuotientSet<Lazy,8,SIMD,OneHot>",
+                (Mode::Lazy, 8, true, true) => "CuckooQuotientSet<Lazy,8,SIMD,EF,OneHot>",
+                (Mode::Eager, 16, false, false) => "CuckooQuotientSet<Eager,16,SWAR,OneHot>",
+                (Mode::Eager, 16, false, true) => "CuckooQuotientSet<Eager,16,SWAR,EF,OneHot>",
+                (Mode::Lazy, 16, false, false) => "CuckooQuotientSet<Lazy,16,SWAR,OneHot>",
+                (Mode::Lazy, 16, false, true) => "CuckooQuotientSet<Lazy,16,SWAR,EF,OneHot>",
+                (Mode::Eager, 16, true, false) => "CuckooQuotientSet<Eager,16,SIMD,OneHot>",
+                (Mode::Eager, 16, true, true) => "CuckooQuotientSet<Eager,16,SIMD,EF,OneHot>",
+                (Mode::Lazy, 16, true, false) => "CuckooQuotientSet<Lazy,16,SIMD,OneHot>",
+                (Mode::Lazy, 16, true, true) => "CuckooQuotientSet<Lazy,16,SIMD,EF,OneHot>",
+                (Mode::Eager, 32, false, false) => "CuckooQuotientSet<Eager,32,SWAR,OneHot>",
+                (Mode::Eager, 32, false, true) => "CuckooQuotientSet<Eager,32,SWAR,EF,OneHot>",
+                (Mode::Lazy, 32, false, false) => "CuckooQuotientSet<Lazy,32,SWAR,OneHot>",
+                (Mode::Lazy, 32, false, true) => "CuckooQuotientSet<Lazy,32,SWAR,EF,OneHot>",
+                (Mode::Eager, 32, true, false) => "CuckooQuotientSet<Eager,32,SIMD,OneHot>",
+                (Mode::Eager, 32, true, true) => "CuckooQuotientSet<Eager,32,SIMD,EF,OneHot>",
+                (Mode::Lazy, 32, true, false) => "CuckooQuotientSet<Lazy,32,SIMD,OneHot>",
+                (Mode::Lazy, 32, true, true) => "CuckooQuotientSet<Lazy,32,SIMD,EF,OneHot>",
+                _ => unreachable!("unsupported prefix width"),
+            };
+        }
         match (Mode::from(MODE), PREFIX, SIMD, EF) {
             (Mode::Eager, 0, _, false) => "CuckooQuotientSet<Eager,0,SWAR>",
             (Mode::Eager, 0, _, true) => "CuckooQuotientSet<Eager,0,SWAR,EF>",
@@ -665,7 +722,7 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool> Hash
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = CuckooSet::<MODE, PREFIX, SIMD, EF>::new(self.slot_ratio, keys);
+        let h = CuckooSet::<MODE, PREFIX, SIMD, EF, FILTER>::new(self.slot_ratio, keys);
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {
@@ -675,13 +732,20 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool> Hash
         self.len() as f32 / (self.num_bins * self.slots) as f32
     }
 
+    fn negative_passes_filter(&self, key: T) -> Option<bool> {
+        if !FILTER || Mode::from(MODE) != Mode::Lazy {
+            return None;
+        }
+        let primary = self.bin_idx_1(key);
+        Some(self.table[primary].might_spill(Self::permute(key, false)))
+    }
+
     fn primary_hit_ratio(&self) -> Option<f32> {
         let mut total = 0usize;
         let mut primary = 0usize;
         for bin in &self.table {
             for slot in 0..self.slots {
-                let entry =
-                    bin.get_encoded::<PREFIX, EF>(slot, self.entry_bits, self.slots, self.low_bits);
+                let entry = bin.get_encoded::<EF>(slot, self.entry_bits, self.slots, self.low_bits);
                 if entry != 0 {
                     total += 1;
                     primary += (entry & 1 == 0) as usize;
@@ -711,12 +775,12 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool> Hash
 mod tests {
     use super::*;
     fn layout<const P: usize>() {
-        assert_eq!(std::mem::size_of::<PackedBin>(), 64);
-        assert_eq!(std::mem::align_of::<PackedBin>(), 64);
+        assert_eq!(std::mem::size_of::<PackedBin<P, false>>(), 64);
+        assert_eq!(std::mem::align_of::<PackedBin<P, false>>(), 64);
         for bits in 32..=64 {
             let slots = 512 / bits;
             let mask = u64::MAX >> (64 - bits);
-            let mut bin = PackedBin([0; 8]);
+            let mut bin = PackedBin::<P, false>([0; 8]);
             let values: Vec<_> = (0..slots)
                 .map(|i| {
                     // Include nonzero entries with an all-zero prefix.
@@ -728,44 +792,44 @@ mod tests {
                 })
                 .collect();
             for (slot, &value) in values.iter().enumerate() {
-                assert!(!bin.full::<P>(bits, slots));
-                bin.push::<P>(value, bits, slots);
+                assert!(!bin.full(bits, slots));
+                bin.push(value, bits, slots);
                 for (i, &expected) in values[..=slot].iter().enumerate() {
-                    assert_eq!(bin.get::<P>(i, bits, slots), expected);
-                    assert!(bin.contains::<P, false>(expected, bits, slots));
-                    assert!(bin.contains::<P, true>(expected, bits, slots));
+                    assert_eq!(bin.get(i, bits, slots), expected);
+                    assert!(bin.contains(expected, bits, slots));
+                    assert!(PackedBin::<P, true>(bin.0).contains(expected, bits, slots));
                 }
-                assert!(!bin.contains::<P, true>(0, bits, slots));
+                assert!(!PackedBin::<P, true>(bin.0).contains(0, bits, slots));
             }
-            assert!(bin.full::<P>(bits, slots));
+            assert!(bin.full(bits, slots));
             for query in (0..1000).map(|x| CuckooSet::<0>::permute(x, true) & mask) {
                 let expected = query != 0 && values.contains(&query);
-                assert_eq!(bin.contains::<P, false>(query, bits, slots), expected);
-                assert_eq!(bin.contains::<P, true>(query, bits, slots), expected);
+                let simd_bin = PackedBin::<P, true>(bin.0);
+                assert_eq!(bin.contains(query, bits, slots), expected);
+                assert_eq!(simd_bin.contains(query, bits, slots), expected);
                 if P != 0 {
                     assert_eq!(
-                        bin.candidates::<P, false>(query, slots),
-                        bin.candidates::<P, true>(query, slots)
+                        bin.candidates(query, slots),
+                        simd_bin.candidates(query, slots)
                     );
                 }
             }
             for i in 0..slots {
-                bin.set::<P>(i, bits, slots, mask);
+                bin.set(i, bits, slots, mask);
             }
             for i in 0..slots {
-                assert_eq!(bin.get::<P>(i, bits, slots), mask);
+                assert_eq!(bin.get(i, bits, slots), mask);
             }
         }
     }
     #[test]
-    fn permutation_is_invertible_within_62_bits() {
+    fn permutation_is_invertible_over_u64() {
         for key in [0, 1, KEY_MASK, 1 << (KEY_BITS - 1)]
             .into_iter()
             .chain((0..10_000u64).map(|x| x.wrapping_mul(0x9e3779b97f4a7c15) & KEY_MASK))
         {
             for secondary in [false, true] {
                 let hash = CuckooSet::<0>::permute(key, secondary);
-                assert!(hash <= KEY_MASK);
                 assert_eq!(CuckooSet::<0>::unpermute(hash, secondary), key);
                 assert_eq!(
                     CuckooSet::<0>::permute(CuckooSet::<0>::unpermute(key, secondary), secondary),
@@ -773,6 +837,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn sequential_keys_have_valid_placements() {
+        let keys: Vec<_> = (1..=20_000).collect();
+        let set = CuckooSet::<1, 32, true>::new(1.05, &keys);
+        assert_eq!(set.len(), keys.len());
+        assert!(keys.into_iter().all(|key| set.contains(key)));
     }
 
     #[test]
@@ -823,6 +895,15 @@ mod tests {
         layout::<32>();
     }
     fn membership<const P: usize, const SIMD: bool, const EF: bool>() {
+        membership_with_filter::<P, SIMD, EF, false>();
+    }
+
+    fn membership_with_filter<
+        const P: usize,
+        const SIMD: bool,
+        const EF: bool,
+        const FILTER: bool,
+    >() {
         type Expected = std::collections::HashSet<u64>;
         for n in [0usize, 1, 20, 1000, 20000] {
             let mut keys: Vec<_> = (1..=n as u64)
@@ -830,7 +911,7 @@ mod tests {
                 .collect();
             keys.extend([KEY_MASK, 1 << (KEY_BITS - 1), KEY_MASK]);
             let expected: Expected = keys.iter().copied().collect();
-            let mut set = CuckooSet::<0, P, SIMD, EF>::new(1.05, &keys);
+            let mut set = CuckooSet::<0, P, SIMD, EF, FILTER>::new(1.05, &keys);
             assert!(set.num_bins >= 2);
             // Force a nonzero key whose primary quotient is zero.
             let special = (1..set.num_bins)
@@ -856,8 +937,7 @@ mod tests {
                 .iter()
                 .copied()
                 .chain((1..20000).map(|x| CuckooSet::<0>::permute(x, true)))
-                .chain([0, 1 << KEY_BITS, u64::MAX])
-                .chain(expected.iter().copied().map(|key| key | (1 << KEY_BITS)))
+                .chain([0, 1 << (KEY_BITS - 1), u64::MAX])
             {
                 let present = expected.contains(&k);
                 assert_eq!(set.contains_eager(k), present);
@@ -906,12 +986,12 @@ mod tests {
         membership::<32, true, false>();
     }
     fn ef_layout<const P: usize>() {
-        for bits in 32..=62 {
+        for bits in 32..=64 {
             let (slots, low_bits) = CuckooSet::<0, P, true, true>::bin_layout(bits);
-            let mut bin = PackedBin([0; 8]);
+            let mut bin = PackedBin::<P, false>([0; 8]);
             let mut expected = Vec::new();
             let mask = u64::MAX >> (64 - bits);
-            assert!(!bin.full_encoded::<P, true>(bits, slots, low_bits));
+            assert!(!bin.full_encoded::<true>(bits, slots, low_bits));
             for i in 0..slots {
                 // Includes zero low parts and entries sharing their high part.
                 let value = if i == 0 && low_bits < bits {
@@ -919,7 +999,7 @@ mod tests {
                 } else {
                     (CuckooSet::<0>::permute((slots - i) as u64, false) & mask).max(1)
                 };
-                bin.push_encoded::<P, true>(value, bits, slots, low_bits);
+                bin.push_encoded::<true>(value, bits, slots, low_bits);
                 expected.push(value);
                 expected.sort_unstable();
                 assert_eq!(
@@ -927,23 +1007,28 @@ mod tests {
                     expected.len()
                 );
                 for (j, &entry) in expected.iter().enumerate() {
-                    assert_eq!(bin.get_encoded::<P, true>(j, bits, slots, low_bits), entry);
-                    assert!(bin.contains_encoded::<P, true, true>(entry, bits, slots, low_bits));
-                    assert!(bin.contains_encoded::<P, false, true>(entry, bits, slots, low_bits));
+                    assert_eq!(bin.get_encoded::<true>(j, bits, slots, low_bits), entry);
+                    assert!(bin.contains_encoded::<true>(entry, bits, slots, low_bits));
+                    assert!(
+                        PackedBin::<P, true>(bin.0)
+                            .contains_encoded::<true>(entry, bits, slots, low_bits)
+                    );
                 }
                 for j in expected.len()..slots {
-                    assert_eq!(bin.get_encoded::<P, true>(j, bits, slots, low_bits), 0);
+                    assert_eq!(bin.get_encoded::<true>(j, bits, slots, low_bits), 0);
                 }
-                assert!(!bin.contains_encoded::<P, true, true>(0, bits, slots, low_bits));
+                assert!(
+                    !PackedBin::<P, true>(bin.0).contains_encoded::<true>(0, bits, slots, low_bits)
+                );
             }
-            assert!(bin.full_encoded::<P, true>(bits, slots, low_bits));
+            assert!(bin.full_encoded::<true>(bits, slots, low_bits));
             for slot in 0..slots {
                 // Replacing a value can move it to another sorted rank.
                 expected[slot] = mask;
                 expected.sort_unstable();
-                bin.set_encoded::<P, true>(slot, bits, slots, low_bits, mask);
+                bin.set_encoded::<true>(slot, bits, slots, low_bits, mask);
                 for (j, &entry) in expected.iter().enumerate() {
-                    assert_eq!(bin.get_encoded::<P, true>(j, bits, slots, low_bits), entry);
+                    assert_eq!(bin.get_encoded::<true>(j, bits, slots, low_bits), entry);
                 }
                 assert_eq!(
                     bin.bitmap(bits, slots, low_bits).count_ones() as usize,
@@ -952,11 +1037,12 @@ mod tests {
             }
             for value in (1..1000).map(|x| (CuckooSet::<0>::permute(x, true) & mask).max(1)) {
                 assert_eq!(
-                    bin.contains_encoded::<P, true, true>(value, bits, slots, low_bits),
+                    PackedBin::<P, true>(bin.0)
+                        .contains_encoded::<true>(value, bits, slots, low_bits),
                     expected.contains(&value)
                 );
                 assert_eq!(
-                    bin.contains_encoded::<P, false, true>(value, bits, slots, low_bits),
+                    bin.contains_encoded::<true>(value, bits, slots, low_bits),
                     expected.contains(&value)
                 );
             }
@@ -972,15 +1058,15 @@ mod tests {
     }
 
     #[test]
-    fn elias_fano_fits_thirteen_41_bit_entries() {
+    fn elias_fano_increases_bucket_capacity() {
         assert_eq!(CuckooSet::<0, 16, true, true>::bin_layout(41), (13, 37));
         assert_eq!(13 * 37 + 16 + 13, 510);
         let capacity = ((1usize << 26) as f64 / 0.99).ceil() as usize;
         let (plain_bins, plain_bits, plain_slots, _) = CuckooSet::<0>::table_layout(capacity);
         let (ef_bins, ef_bits, ef_slots, ef_low) =
             CuckooSet::<0, 16, true, true>::table_layout(capacity);
-        assert_eq!((plain_bits, plain_slots), (41, 12));
-        assert_eq!((ef_bits, ef_slots, ef_low), (41, 13, 37));
+        assert_eq!((plain_bits, plain_slots), (43, 11));
+        assert_eq!((ef_bits, ef_slots, ef_low), (43, 12, 39));
         assert!(ef_bins < plain_bins);
     }
 
@@ -1014,9 +1100,61 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "keys must fit in 62 bits")]
-    fn rejects_oversized_keys() {
-        CuckooSet::<0>::new(1.1, &[1 << KEY_BITS]);
+    fn one_hot_prefix16_simd() {
+        membership_with_filter::<16, true, false, true>();
+    }
+
+    #[test]
+    fn one_hot_ef_prefix16_simd() {
+        membership_with_filter::<16, true, true, true>();
+    }
+
+    #[test]
+    fn one_hot_prefix32_simd() {
+        membership_with_filter::<32, true, false, true>();
+    }
+
+    #[test]
+    fn one_hot_ef_prefix32_simd() {
+        membership_with_filter::<32, true, true, true>();
+    }
+
+    #[test]
+    fn one_hot_summary_tracks_secondary_entries() {
+        let keys: Vec<_> = (1..=20_000u64)
+            .map(|x| CuckooSet::<0>::permute(x, false))
+            .collect();
+        let mut set = CuckooSet::<1, 16, true, true, true>::new(1.05, &keys);
+        assert!(set.summary_ready);
+        let mut secondary = 0;
+        for (idx, bin) in set.table.iter().enumerate() {
+            for slot in 0..set.slots {
+                let entry = bin.get_encoded::<true>(slot, set.entry_bits, set.slots, set.low_bits);
+                if entry != 0 && entry & 1 != 0 {
+                    secondary += 1;
+                    let key = set.decode(entry, idx);
+                    let primary = set.bin_idx_1(key);
+                    assert!(set.table[primary].might_spill(CuckooSet::<0>::permute(key, false)));
+                }
+            }
+        }
+        assert!(secondary > 0);
+        let rejected = (20_001..21_001u64)
+            .map(|x| CuckooSet::<0>::permute(x, true))
+            .filter(|&key| !set.contains(key))
+            .filter(|&key| !set.negative_passes_filter(key).unwrap())
+            .count();
+        assert!(rejected > 0);
+        let extra = u64::MAX - 1;
+        set.insert(extra);
+        assert!(set.contains_lazy(extra));
+        assert!(set.table.iter().all(|bin| bin.0[7] == u64::MAX));
+    }
+
+    #[test]
+    #[should_panic(expected = "zero keys are not supported")]
+    fn rejects_zero_keys() {
+        CuckooSet::<0>::new(1.1, &[0]);
     }
 
     #[test]
