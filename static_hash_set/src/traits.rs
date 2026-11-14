@@ -15,6 +15,10 @@ pub trait HashSet: Send + Sync {
     fn max_primary_bucket_size(&self) -> Option<usize> {
         None
     }
+    /// Whether a negative query passes the spill filter. None if lookup does not use one.
+    fn negative_passes_filter(&self, _key: T) -> Option<bool> {
+        None
+    }
     fn kphf_target_bits_per_key(&self) -> f32 {
         0.0
     }

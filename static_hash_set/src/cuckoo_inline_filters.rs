@@ -435,6 +435,14 @@ impl<
         self.len() as f32 / (self.num_bins * BIN_SIZE) as f32
     }
 
+    fn negative_passes_filter(&self, key: T) -> Option<bool> {
+        if matches!(Mode::from(MODE), Mode::Eager) {
+            return None;
+        }
+        let bin = self.get_bin(self.bin_idx_1(key));
+        Some(Self::might_spill(bin.spill, key))
+    }
+
     fn primary_hit_ratio(&self) -> Option<f32> {
         let mut total = 0usize;
         let mut primary = 0usize;

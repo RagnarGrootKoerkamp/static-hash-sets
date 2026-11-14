@@ -337,6 +337,14 @@ impl<const MODE: u8> HashSet for FilteredCuckooSet<MODE> {
         self.len() as f32 / (self.num_bins * BIN_SIZE) as f32
     }
 
+    fn negative_passes_filter(&self, key: T) -> Option<bool> {
+        if matches!(Mode::from(MODE), Mode::Eager) {
+            return None;
+        }
+        let bin = self.get_bin(self.bin_idx_1(key));
+        Some(bin.spill & Self::fingerprint_bit(key) != 0)
+    }
+
     fn primary_hit_ratio(&self) -> Option<f32> {
         let mut total = 0usize;
         let mut primary = 0usize;

@@ -666,6 +666,7 @@ pub struct Result {
     load_factor: f32,
     primary_hit_ratio: Option<f32>,
     max_primary_bucket_size: Option<usize>,
+    negative_filter_pass_ratio: Option<f32>,
     bumped_frac: f32,
     overhead: f32,
     /// Allocated bytes divided by the input's n * sizeof(u64) bytes.
@@ -738,6 +739,29 @@ impl Bencher {
         }
     }
 
+    fn negative_filter_pass_ratio(&self, set: &dyn HashSet) -> Option<f32> {
+        const SAMPLES: usize = 200_000;
+        set.negative_passes_filter(1)?;
+        let mut passed = 0;
+        let mut sampled = 0;
+        let mut queries = [0; 1024];
+        while sampled < SAMPLES {
+            rand::fill(&mut queries);
+            for key in queries {
+                let key = key & cuckoo_quotienting::KEY_MASK;
+                if key == 0 || set.contains(key) {
+                    continue;
+                }
+                passed += usize::from(set.negative_passes_filter(key)?);
+                sampled += 1;
+                if sampled == SAMPLES {
+                    break;
+                }
+            }
+        }
+        Some(passed as f32 / sampled as f32)
+    }
+
     pub fn bench(
         &self,
         constructor: fn(f32, &[T]) -> Option<Box<dyn HashSet>>,
@@ -763,6 +787,7 @@ impl Bencher {
             self.n,
         );
         let pf = h.has_prefetch();
+        let negative_filter_pass_ratio = self.negative_filter_pass_ratio(h.as_ref());
         for threads in selected_threads() {
             for metric in MODES {
                 for query_repeat in 0..if quick_bench() { 1 } else { QUERY_REPEATS } {
@@ -810,6 +835,7 @@ impl Bencher {
                         load_factor,
                         primary_hit_ratio,
                         max_primary_bucket_size,
+                        negative_filter_pass_ratio,
                         bumped_frac,
                         overhead,
                         memory_ratio,

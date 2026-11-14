@@ -45,6 +45,9 @@ def read_data(name):
     if "max_primary_bucket_size" not in data.columns:
         data["max_primary_bucket_size"] = float("nan")
 
+    if "negative_filter_pass_ratio" not in data.columns:
+        data["negative_filter_pass_ratio"] = float("nan")
+
     data["h"] = data["h"].map(cleanup_name)
     data = data[~(data["h"] == "FphMetaSet")]
     data = data[~(data["h"] == "MapEmbed")]
@@ -69,6 +72,7 @@ def read_data(name):
         for column in ["build", "load_factor", "memory_ratio", "primary_hit_ratio", *queries]
     }
     aggregations["max_primary_bucket_size"] = "max"
+    aggregations["negative_filter_pass_ratio"] = "mean"
     data = data.groupby(group_columns, as_index=False, sort=False).agg(aggregations)
 
     return data
@@ -275,6 +279,11 @@ def interactive_label(name, alpha, subset):
         lo, hi = primary.min(), primary.max()
         hit_rate = f"{lo:.0f}%" if round(lo) == round(hi) else f"{lo:.0f}–{hi:.0f}%"
         label += f" · hit {hit_rate}"
+    pass_rates = subset["negative_filter_pass_ratio"].dropna() * 100
+    if not pass_rates.empty:
+        lo, hi = pass_rates.min(), pass_rates.max()
+        pass_rate = f"{lo:.1f}%" if round(lo, 1) == round(hi, 1) else f"{lo:.1f}–{hi:.1f}%"
+        label += f" · neg pass {pass_rate}"
     return label
 
 
