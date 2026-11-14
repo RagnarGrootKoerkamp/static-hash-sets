@@ -117,34 +117,31 @@ impl<
     }
 
     #[inline(always)]
-    fn bloom_bits(key: T) -> u64 {
-        let h1 = key.wrapping_mul(0x9e3779b97f4a7c15) ^ key.rotate_left(23);
-        let h2 = key.wrapping_mul(0xbf58476d1ce4e5b9) ^ key.rotate_right(17);
-        (1u64 << ((h1 ^ (h1 >> 32)) & 63)) | (1u64 << ((h2 ^ (h2 >> 29)) & 63))
+    fn bloom_bits(hash: u64) -> u64 {
+        Self::one_hot_bit(hash) | (1u64 << ((hash >> 32) & 63))
     }
 
     #[inline(always)]
-    fn one_hot_bit(key: T) -> u64 {
-        let hash = key.wrapping_mul(0x9e3779b97f4a7c15) ^ key.rotate_left(23);
-        1u64 << ((hash ^ (hash >> 32)) & 63)
+    fn one_hot_bit(hash: u64) -> u64 {
+        1u64 << (hash & 63)
     }
 
     #[inline(always)]
-    fn add_summary(summary: &mut u64, key: T) {
+    fn add_summary(summary: &mut u64, hash: u64) {
         let bits = if ONE_HOT {
-            Self::one_hot_bit(key)
+            Self::one_hot_bit(hash)
         } else {
-            Self::bloom_bits(key)
+            Self::bloom_bits(hash)
         };
         *summary |= bits;
     }
 
     #[inline(always)]
-    fn might_spill(summary: u64, key: T) -> bool {
+    fn might_spill(summary: u64, hash: u64) -> bool {
         let bits = if ONE_HOT {
-            Self::one_hot_bit(key)
+            Self::one_hot_bit(hash)
         } else {
-            Self::bloom_bits(key)
+            Self::bloom_bits(hash)
         };
         summary & bits == bits
     }
@@ -163,9 +160,10 @@ impl<
             for slot in 0..BIN_SIZE {
                 let key = self.table[bucket].slots[slot];
                 if key != 0 {
-                    let primary = self.bin_idx_1(key);
+                    let hash = Self::primary_hash(key);
+                    let primary = self.bin_idx_from_hash(hash);
                     if INCLUDE_PRIMARY || primary != bucket {
-                        Self::add_summary(&mut self.table[primary].spill, key);
+                        Self::add_summary(&mut self.table[primary].spill, hash);
                     }
                 }
             }
@@ -182,9 +180,18 @@ impl<
     }
 
     #[inline(always)]
+    fn primary_hash(key: T) -> u64 {
+        Hasher::default().hash_one(key)
+    }
+
+    #[inline(always)]
+    fn bin_idx_from_hash(&self, hash: u64) -> usize {
+        (((hash as u128) * (self.num_bins as u128)) >> 64) as usize
+    }
+
+    #[inline(always)]
     fn bin_idx_1(&self, key: T) -> usize {
-        let hash64 = Hasher::default().hash_one(key);
-        (((hash64 as u128) * (self.num_bins as u128)) >> 64) as usize
+        self.bin_idx_from_hash(Self::primary_hash(key))
     }
 
     #[inline(always)]
@@ -201,9 +208,10 @@ impl<
 
     #[inline(always)]
     pub fn prefetch_first(&self, key: T) -> usize {
-        let bin_idx = self.bin_idx_1(key);
+        let hash = Self::primary_hash(key);
+        let bin_idx = self.bin_idx_from_hash(hash);
         prefetch_index::prefetch_index(&self.table, bin_idx);
-        bin_idx
+        hash as usize
     }
     #[inline(always)]
     pub fn prefetch_second(&self, key: T) -> usize {
@@ -213,7 +221,8 @@ impl<
     }
     #[inline(always)]
     pub fn prefetch_both(&self, key: T) -> usize {
-        let b1 = self.prefetch_first(key);
+        let b1 = self.bin_idx_1(key);
+        prefetch_index::prefetch_index(&self.table, b1);
         let b2 = self.prefetch_second(key);
         (b1 << 32) | (b2 as u32) as usize
     }
@@ -230,29 +239,24 @@ impl<
         if key == 0 {
             return self.has_zero;
         }
-
         let keys = S::splat(key as _);
-
-        let bin_idx = self.bin_idx_1(key);
+        let hash = Self::primary_hash(key);
+        let bin_idx = self.bin_idx_from_hash(hash);
         let bin1 = self.get_bin(bin_idx);
         if BRANCHLESS_SECONDARY {
             let primary_match = bin1.contains(keys);
-            let may_spill = Self::might_spill(bin1.spill, key);
+            let may_spill = Self::might_spill(bin1.spill, hash);
             let bin2 = self.bin_idx_2(key);
-            let secondary_idx = Self::choose_secondary(
-                bin_idx,
-                bin2,
-                (!primary_match) & may_spill,
-            );
+            let secondary_idx = Self::choose_secondary(bin_idx, bin2, (!primary_match) & may_spill);
             return primary_match | self.get_bin(secondary_idx).contains(keys);
         }
-        if INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, key) {
+        if INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, hash) {
             return false;
         }
         if bin1.contains(keys) {
             return true;
         }
-        if !INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, key) {
+        if !INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, hash) {
             return false;
         }
         self.get_bin(self.bin_idx_2(key)).contains(keys)
@@ -279,33 +283,28 @@ impl<
     }
 
     #[inline(always)]
-    pub fn contains_lazy_with_token(&self, key: T, bin1: usize) -> bool {
+    pub fn contains_lazy_with_token(&self, key: T, token: usize) -> bool {
         if key == 0 {
             return self.has_zero;
         }
-
         let keys = S::splat(key as _);
-
-        let primary_idx = bin1;
+        let hash = token as u64;
+        let primary_idx = self.bin_idx_from_hash(hash);
         let bin1 = self.get_bin(primary_idx);
         if BRANCHLESS_SECONDARY {
             let primary_match = bin1.contains(keys);
-            let may_spill = Self::might_spill(bin1.spill, key);
+            let may_spill = Self::might_spill(bin1.spill, hash);
             let bin2 = self.bin_idx_2(key);
-            let secondary_idx = Self::choose_secondary(
-                primary_idx,
-                bin2,
-                (!primary_match) & may_spill,
-            );
+            let secondary_idx = Self::choose_secondary(primary_idx, bin2, (!primary_match) & may_spill);
             return primary_match | self.get_bin(secondary_idx).contains(keys);
         }
-        if INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, key) {
+        if INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, hash) {
             return false;
         }
         if bin1.contains(keys) {
             return true;
         }
-        if !INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, key) {
+        if !INCLUDE_PRIMARY && !Self::might_spill(bin1.spill, hash) {
             return false;
         }
         self.get_bin(self.bin_idx_2(key)).contains(keys)
@@ -439,8 +438,9 @@ impl<
         if matches!(Mode::from(MODE), Mode::Eager) {
             return None;
         }
-        let bin = self.get_bin(self.bin_idx_1(key));
-        Some(Self::might_spill(bin.spill, key))
+        let hash = Self::primary_hash(key);
+        let bin = self.get_bin(self.bin_idx_from_hash(hash));
+        Some(Self::might_spill(bin.spill, hash))
     }
 
     fn primary_hit_ratio(&self) -> Option<f32> {
@@ -537,6 +537,10 @@ mod tests {
         }
         for key in 20_000..21_000 {
             assert!(!set.contains_lazy(key), "unexpected {key}");
+            assert!(
+                !set.contains_with_token(key, set.prefetch_first(key)),
+                "token lookup found absent {key}"
+            );
         }
         set.insert(30_000);
         assert!(set.contains_lazy(30_000));
@@ -547,12 +551,13 @@ mod tests {
         let mut summary = 0;
         let keys = [17u64, 71, 125, 999];
         for key in keys {
-            InlineFilterCuckooSet::<1, true>::add_summary(&mut summary, key);
+            let hash = InlineFilterCuckooSet::<1, true>::primary_hash(key);
+            InlineFilterCuckooSet::<1, true>::add_summary(&mut summary, hash);
             assert_ne!(
-                summary & InlineFilterCuckooSet::<1, true>::one_hot_bit(key),
+                summary & InlineFilterCuckooSet::<1, true>::one_hot_bit(hash),
                 0
             );
-            assert!(InlineFilterCuckooSet::<1, true>::might_spill(summary, key));
+            assert!(InlineFilterCuckooSet::<1, true>::might_spill(summary, hash));
         }
         assert_eq!(summary.count_ones() as usize, keys.len());
     }
