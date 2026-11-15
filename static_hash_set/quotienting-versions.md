@@ -18,4 +18,10 @@ bucket.
 - **v6:** Keeps v5's layout and AVX512BW compare. Reduces equal-byte runs by
   combining masks for runs of 2, 4, and 8, then overlaps those masks for the
   selected entry width. This replaces the linear chain of up to seven ANDs
-  with at most three dependent ANDs. Hellman results are pending.
+  with at most three dependent ANDs. Hellman was about 1–13% faster than v5,
+  depending on thread count and lookup mode, but remained 5–24% slower than v4.
+- **v7:** Keeps v5's layout and AVX512BW compare. Adds the start mask to the
+  byte equality mask and checks carry bits at entry boundaries. Any boundary
+  carry implies at least one complete entry match. On Hellman it was 2–10%
+  faster than v6, but remained 2–12% slower than v4. The exhaustive mask test
+  and direct AVX512 lookup test passed on Hellman.

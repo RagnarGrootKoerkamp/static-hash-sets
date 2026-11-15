@@ -51,6 +51,14 @@ const fn byte_start_mask<const W: usize>() -> u64 {
     mask
 }
 
+#[inline(always)]
+fn has_equal_byte_entry<const W: usize>(equal: u64) -> bool {
+    let starts = byte_start_mask::<W>();
+    let sum = equal.wrapping_add(starts);
+    let carry_into = sum ^ equal ^ starts;
+    (carry_into & (starts << W)) != 0
+}
+
 /// One 64-byte bucket. With P = 0, entries are stored consecutively. Otherwise
 /// the first `slots * P` bits hold slot prefixes, followed by their packed
 /// suffixes in slot order. Elias–Fano stores only each entry's low bits in
@@ -114,43 +122,7 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
         let target = _mm512_shuffle_epi8(repeated_value, shuffle);
         let data = unsafe { _mm512_loadu_si512(self.0.as_ptr().cast()) };
         let equal = _mm512_cmpeq_epi8_mask(data, target) as u64;
-        let all_bytes_equal = match W {
-            1 => equal,
-            2 => {
-                let run2 = equal & (equal >> 1);
-                run2
-            }
-            3 => {
-                let run2 = equal & (equal >> 1);
-                run2 & (run2 >> 1)
-            }
-            4 => {
-                let run2 = equal & (equal >> 1);
-                run2 & (run2 >> 2)
-            }
-            5 => {
-                let run2 = equal & (equal >> 1);
-                let run4 = run2 & (run2 >> 2);
-                run4 & (run4 >> 1)
-            }
-            6 => {
-                let run2 = equal & (equal >> 1);
-                let run4 = run2 & (run2 >> 2);
-                run4 & (run4 >> 2)
-            }
-            7 => {
-                let run2 = equal & (equal >> 1);
-                let run4 = run2 & (run2 >> 2);
-                run4 & (run4 >> 3)
-            }
-            8 => {
-                let run2 = equal & (equal >> 1);
-                let run4 = run2 & (run2 >> 2);
-                run4 & (run4 >> 4)
-            }
-            _ => unreachable!("encoded entry exceeds 64 bits"),
-        };
-        (all_bytes_equal & byte_start_mask::<W>()) != 0
+        has_equal_byte_entry::<W>(equal)
     }
 
     #[inline(always)]
@@ -1041,5 +1013,80 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool> Ha
     #[inline(always)]
     fn contains_with_token(&self, key: T, token: usize) -> bool {
         self.contains_with_token(key, token)
+    }
+}
+
+#[cfg(test)]
+mod byte_entry_match_tests {
+    use super::{has_equal_byte_entry, PackedBin};
+
+    fn check_carry_detector<const W: usize>() {
+        let slots = 56 / W;
+        let digit_count = 1usize << W;
+        let all_equal = digit_count - 1;
+
+        // Exhaust every pair of adjacent entry masks at every bucket position.
+        // This includes carry propagation through following groups.
+        for first_slot in 0..slots - 1 {
+            for first in 0..digit_count {
+                for second in 0..digit_count {
+                    let equal = ((first as u64) << (first_slot * W))
+                        | ((second as u64) << ((first_slot + 1) * W));
+                    let expected = first == all_equal || second == all_equal;
+                    assert_eq!(
+                        has_equal_byte_entry::<W>(equal),
+                        expected,
+                        "width={W}, slot={first_slot}, first={first:b}, second={second:b}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn check_avx512_lookup<const W: usize>() {
+        let bits = W * 8;
+        let slots = 56 / W;
+        let query = (0x9e37_79b9_7f4a_7c15u64 & (u64::MAX >> (64 - bits))).max(1);
+        let mut bin = PackedBin::<32, true>([0; 8]);
+        for slot in 0..slots - 1 {
+            bin.set_bytes(slot, bits, query ^ (slot as u64 + 1));
+        }
+        bin.set_bytes(slots - 1, bits, query);
+
+        assert!(bin.contains_bytes::<W>(query, bits));
+        let absent = query ^ slots as u64;
+        assert!(!bin.contains_bytes::<W>(absent, bits));
+
+        #[cfg(target_arch = "x86_64")]
+        if std::arch::is_x86_feature_detected!("avx512f")
+            && std::arch::is_x86_feature_detected!("avx512bw")
+        {
+            assert!(unsafe { bin.contains_bytes_avx512::<W>(query) });
+            assert!(!unsafe { bin.contains_bytes_avx512::<W>(absent) });
+        }
+    }
+
+    #[test]
+    fn carry_detector_matches_full_entry_scan() {
+        check_carry_detector::<1>();
+        check_carry_detector::<2>();
+        check_carry_detector::<3>();
+        check_carry_detector::<4>();
+        check_carry_detector::<5>();
+        check_carry_detector::<6>();
+        check_carry_detector::<7>();
+        check_carry_detector::<8>();
+    }
+
+    #[test]
+    fn byte_lookup_matches_entries_at_each_supported_width() {
+        check_avx512_lookup::<1>();
+        check_avx512_lookup::<2>();
+        check_avx512_lookup::<3>();
+        check_avx512_lookup::<4>();
+        check_avx512_lookup::<5>();
+        check_avx512_lookup::<6>();
+        check_avx512_lookup::<7>();
+        check_avx512_lookup::<8>();
     }
 }
