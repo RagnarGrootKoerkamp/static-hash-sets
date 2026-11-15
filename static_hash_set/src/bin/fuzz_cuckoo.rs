@@ -36,7 +36,7 @@ fn main() {
         let expected: std::collections::HashSet<_> = keys.iter().copied().collect();
         let mut input = keys.clone();
         input.extend_from_slice(&keys[..n.min(17)]);
-        for alpha in [0.95, 0.98] {
+        for alpha in [0.9, 0.95] {
             let sets: Vec<Box<dyn HashSet>> = vec![
                 Box::new(Inline::<1, false, false, true>::new(1. / alpha, &input)),
                 Box::new(Quotient::<1, 32, false, true, true, true>::new(1. / alpha, &input)),

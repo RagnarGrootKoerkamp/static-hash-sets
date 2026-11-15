@@ -19,7 +19,7 @@
 
 Reproduce with `just bench-bfs-hellman` and `just bench-twohot-hellman`.
 Both accept optional sizes and loads. Defaults: the 25 existing sizes,
-95%/98% load, 1/16/192 threads, quick mode, one million queries per thread,
+90%/95% load, 1/16/192 threads, quick mode, one million queries per thread,
 one pass, 2.551 GHz. Only the requested methods run. CSV merging preserves
 sizes and loads not present in the new run.
 
@@ -47,5 +47,8 @@ One quick pass per configuration, with no reruns.
 | Quotient 1hot | 95% | 3.39 | 0.923 | 0.865 | 0.973 | 0.956 |
 | Quotient 1hot | 98% | 3.36 | 0.827 | 0.790 | 0.923 | 0.909 |
 
-For a short comparison use `just bench-bfs-hellman 1000000 0.95,0.98`.
-For the new filters use `just bench-twohot-hellman 1000000 0.95,0.98`.
+For a short comparison use `just bench-bfs-hellman 1000000 0.9,0.95`.
+For the new filters use `just bench-twohot-hellman 1000000 0.9,0.95`.
+
+Future benchmark and fuzz defaults use 90%/95% load. The completed comparison
+above used 95%/98%; those historical measurements are preserved.
