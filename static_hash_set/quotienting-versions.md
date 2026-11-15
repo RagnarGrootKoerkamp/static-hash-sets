@@ -28,3 +28,7 @@ bucket.
   over entry width. Compile-time shuffle, start, and boundary mask arrays are
   indexed by the table's runtime width. Hellman was 2–9% faster than v7 in
   every mode/thread combination except one-thread loop mode, which was 1% slower.
+- **v9:** Moves the selected shuffle, start, and boundary masks into a
+  `ByteMasks` member on each quotient table, initialized once from its entry
+  width. On Hellman it was 1–13% faster than v8 except 192-thread prefetch2,
+  which was about 1% slower.

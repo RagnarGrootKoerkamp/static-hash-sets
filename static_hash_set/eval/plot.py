@@ -146,6 +146,7 @@ label_color = {
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v6": "#C2185B",
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v7": "#6A1B9A",
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v8": "#3949AB",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v9": "#EF6C00",
     "CuckooQuotientSet<Eager,32,SIMD>": "steelblue",
     "CuckooQuotientSet<Lazy,8,SIMD,EF>": "#00FFFF",
     "CuckooQuotientSet<Eager,8,SIMD,EF>": "#0080FF",
@@ -220,6 +221,7 @@ display_name = {
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v6": "Quotient 32 lazy + 1-hot v6 (mask tree)",
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v7": "Quotient 32 lazy + 1-hot v7 (carry mask)",
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v8": "Quotient 32 lazy + 1-hot v8 (runtime width)",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v9": "Quotient 32 lazy + 1-hot v9 (table masks)",
     "CuckooQuotientSet<Eager,32,SIMD>": "Quotient<Eager, 32-bit SIMD>",
     "CuckooQuotientSet<Lazy,8,SIMD,EF>": "Quotient 8 lazy + EF",
     "CuckooQuotientSet<Eager,8,SIMD,EF>": "Quotient 8 eager + EF",
@@ -344,6 +346,7 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v6",
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v7",
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v8",
+        "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v9",
     ])
     data = data[~quotienting | lazy_32_one_hot]
     panel_titles = [title for _ in metric_specs for _ in thread_specs for title in titles]

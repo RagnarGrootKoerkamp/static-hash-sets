@@ -31,52 +31,36 @@ const SECONDARY_SEED: u64 = 0x9e3779b97f4a7c15;
 const MIX_MULTIPLIER: u64 = 0xbf58476d1ce4e5b9;
 const MIX_INVERSE: u64 = 0x96de1b173f119089;
 
-const fn make_byte_shuffle_masks() -> [[i8; 64]; 9] {
-    let mut masks = [[0i8; 64]; 9];
-    let mut width = 1;
-    while width <= 8 {
-        let mut i = 0;
-        while i < 64 {
-            masks[width][i] = (i % width) as i8;
-            i += 1;
-        }
-        width += 1;
-    }
-    masks
+#[derive(Clone)]
+struct ByteMasks {
+    width: usize,
+    shuffle: [i8; 64],
+    starts: u64,
+    boundaries: u64,
 }
 
-const fn make_byte_start_masks() -> [u64; 9] {
-    let mut masks = [0u64; 9];
-    let mut width = 1;
-    while width <= 8 {
-        let mut slot = 0;
-        while slot < 56 / width {
-            masks[width] |= 1u64 << (slot * width);
-            slot += 1;
+impl ByteMasks {
+    fn new(width: usize) -> Self {
+        debug_assert!((1..=8).contains(&width));
+        let shuffle = std::array::from_fn(|i| (i % width) as i8);
+        let mut starts = 0;
+        for slot in 0..56 / width {
+            starts |= 1u64 << (slot * width);
         }
-        width += 1;
+        Self {
+            width,
+            shuffle,
+            starts,
+            boundaries: starts << width,
+        }
     }
-    masks
 }
-
-const BYTE_SHUFFLE_MASKS: [[i8; 64]; 9] = make_byte_shuffle_masks();
-const BYTE_START_MASKS: [u64; 9] = make_byte_start_masks();
-const BYTE_BOUNDARY_MASKS: [u64; 9] = {
-    let mut masks = [0u64; 9];
-    let mut width = 1;
-    while width <= 8 {
-        masks[width] = BYTE_START_MASKS[width] << width;
-        width += 1;
-    }
-    masks
-};
 
 #[inline(always)]
-fn has_equal_byte_entry(equal: u64, width: usize) -> bool {
-    let starts = BYTE_START_MASKS[width];
-    let sum = equal.wrapping_add(starts);
-    let carry_into = sum ^ equal ^ starts;
-    (carry_into & BYTE_BOUNDARY_MASKS[width]) != 0
+fn has_equal_byte_entry(equal: u64, masks: &ByteMasks) -> bool {
+    let sum = equal.wrapping_add(masks.starts);
+    let carry_into = sum ^ equal ^ masks.starts;
+    (carry_into & masks.boundaries) != 0
 }
 
 /// One 64-byte bucket. With P = 0, entries are stored consecutively. Otherwise
@@ -120,29 +104,28 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     }
 
     #[inline(always)]
-    fn contains_bytes(&self, value: u64, bits: usize, width: usize) -> bool {
-        debug_assert_eq!(width, bits.div_ceil(8));
+    fn contains_bytes(&self, value: u64, bits: usize, masks: &ByteMasks) -> bool {
+        debug_assert_eq!(masks.width, bits.div_ceil(8));
         #[cfg(target_arch = "x86_64")]
         if std::arch::is_x86_feature_detected!("avx512f")
             && std::arch::is_x86_feature_detected!("avx512bw")
         {
-            return unsafe { self.contains_bytes_avx512(value, width) };
+            return unsafe { self.contains_bytes_avx512(value, masks) };
         }
-        let slots = 56 / width;
+        let slots = 56 / masks.width;
         (0..slots).any(|slot| self.get_bytes(slot, bits) == value)
     }
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx512f,avx512bw")]
-    unsafe fn contains_bytes_avx512(&self, value: u64, width: usize) -> bool {
+    unsafe fn contains_bytes_avx512(&self, value: u64, masks: &ByteMasks) -> bool {
         use std::arch::x86_64::*;
         let repeated_value = _mm512_set1_epi64(value as i64);
-        let indexes = &BYTE_SHUFFLE_MASKS[width];
-        let shuffle = unsafe { _mm512_loadu_si512(indexes.as_ptr().cast()) };
+        let shuffle = unsafe { _mm512_loadu_si512(masks.shuffle.as_ptr().cast()) };
         let target = _mm512_shuffle_epi8(repeated_value, shuffle);
         let data = unsafe { _mm512_loadu_si512(self.0.as_ptr().cast()) };
         let equal = _mm512_cmpeq_epi8_mask(data, target) as u64;
-        has_equal_byte_entry(equal, width)
+        has_equal_byte_entry(equal, masks)
     }
 
     #[inline(always)]
@@ -483,6 +466,7 @@ pub struct CuckooSet<
     entry_bits: usize,
     slots: usize,
     low_bits: usize,
+    byte_masks: ByteMasks,
     len: usize,
     summary_ready: bool,
 }
@@ -510,6 +494,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         );
         let capacity = (n as f64 * slot_ratio as f64).ceil() as usize;
         let (num_bins, entry_bits, slots, low_bits) = Self::table_layout(capacity);
+        let byte_masks = ByteMasks::new(entry_bits.div_ceil(8));
         assert!(
             num_bins <= u32::MAX as usize,
             "prefetch tokens require 32-bit bucket indices"
@@ -521,6 +506,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
             entry_bits,
             slots,
             low_bits,
+            byte_masks,
             len: 0,
             summary_ready: false,
         }
@@ -706,11 +692,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
                 self.low_bits,
             );
         }
-        self.table[idx].contains_bytes(
-            value,
-            self.entry_bits,
-            self.entry_bits.div_ceil(8),
-        )
+        self.table[idx].contains_bytes(value, self.entry_bits, &self.byte_masks)
     }
 
     fn rebuild_spill(&mut self) {
@@ -784,16 +766,19 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         hash: u64,
         bin1: usize,
         entry: u64,
-        width: usize,
     ) -> bool {
         let primary_match = entry != 0
-            && self.table[bin1].contains_bytes(entry, self.entry_bits, width);
+            && self
+                .table[bin1]
+                .contains_bytes(entry, self.entry_bits, &self.byte_masks);
         if self.table[bin1].might_spill(hash) {
             let secondary_product = (Self::permute(key, true) as u128) * self.num_bins as u128;
             let bin2 = (secondary_product >> 64) as usize;
             let secondary_entry = (((secondary_product as u64) >> (65 - self.entry_bits)) << 1) | 1;
             return primary_match
-                | self.table[bin2].contains_bytes(secondary_entry, self.entry_bits, width);
+                | self
+                    .table[bin2]
+                    .contains_bytes(secondary_entry, self.entry_bits, &self.byte_masks);
         }
         primary_match
     }
@@ -808,13 +793,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         let bin1 = (product >> 64) as usize;
         let entry = ((product as u64) >> (65 - self.entry_bits)) << 1;
         if self.byte_layout() {
-            return self.contains_lazy_byte_layout(
-                key,
-                hash,
-                bin1,
-                entry,
-                self.entry_bits.div_ceil(8),
-            );
+            return self.contains_lazy_byte_layout(key, hash, bin1, entry);
         }
         // A zero primary encoding is always stored in its secondary bucket.
         if entry == 0 {
