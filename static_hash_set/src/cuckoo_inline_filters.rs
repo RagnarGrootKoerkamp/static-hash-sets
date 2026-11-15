@@ -121,7 +121,7 @@ impl<const MODE: u8, const ONE_HOT: bool, const BRANCHLESS_SECONDARY: bool, cons
     #[inline(always)]
     fn bloom_bits(hash: u64) -> u64 {
         let first = hash & 63;
-        let second = (first + 1 + (hash >> 32) % 63) & 63;
+        let second = (hash >> 6) & 63;
         (1u64 << first) | (1u64 << second)
     }
 
@@ -255,21 +255,12 @@ impl<const MODE: u8, const ONE_HOT: bool, const BRANCHLESS_SECONDARY: bool, cons
             let secondary_idx = Self::choose_secondary(bin_idx, bin2, (!primary_match) & may_spill);
             return primary_match | self.get_bin(secondary_idx).contains(key);
         }
-        if ONE_HOT {
-            let primary_match = bin1.contains(key);
-            let may_spill = Self::might_spill(bin1.spill, hash);
-            if may_spill {
-                return primary_match | self.get_bin(self.bin_idx_2(key)).contains(key);
-            }
-            return primary_match;
+        let primary_match = bin1.contains(key);
+        let may_spill = Self::might_spill(bin1.spill, hash);
+        if may_spill {
+            return primary_match | self.get_bin(self.bin_idx_2(key)).contains(key);
         }
-        if bin1.contains(key) {
-            return true;
-        }
-        if !Self::might_spill(bin1.spill, hash) {
-            return false;
-        }
-        self.get_bin(self.bin_idx_2(key)).contains(key)
+        primary_match
     }
 
     #[inline(always)]
@@ -383,21 +374,12 @@ impl<const MODE: u8, const ONE_HOT: bool, const BRANCHLESS_SECONDARY: bool, cons
                 Self::choose_secondary(primary_idx, bin2, (!primary_match) & may_spill);
             return primary_match | self.get_bin(secondary_idx).contains(key);
         }
-        if ONE_HOT {
-            let primary_match = bin1.contains(key);
-            let may_spill = Self::might_spill(bin1.spill, hash);
-            if may_spill {
-                return primary_match | self.get_bin(self.bin_idx_2(key)).contains(key);
-            }
-            return primary_match;
+        let primary_match = bin1.contains(key);
+        let may_spill = Self::might_spill(bin1.spill, hash);
+        if may_spill {
+            return primary_match | self.get_bin(self.bin_idx_2(key)).contains(key);
         }
-        if bin1.contains(key) {
-            return true;
-        }
-        if !Self::might_spill(bin1.spill, hash) {
-            return false;
-        }
-        self.get_bin(self.bin_idx_2(key)).contains(key)
+        primary_match
     }
 
     #[inline(always)]

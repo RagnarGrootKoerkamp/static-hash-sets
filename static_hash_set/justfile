@@ -74,10 +74,15 @@ fuzz-cuckoo n="10000":
 
 # Run only the new 2-hot BFS variants; compare with the existing 1-hot BFS data.
 bench-twohot-hellman ns=sizes alphas="0.9,0.95":
-    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.cuckoo-twohot-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; srun --cpu-freq=2551000:UserSpace cargo rustc --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- -C target-feature=+avx512f,+avx512bw && srun --cpu-freq=2551000:UserSpace ../target-hellman/release/static_hash_set --ns {{ns}} --threads 1,16,192 --only inline-twohot-cuckoo-lazy-bfs,quotient-lazy-32-twohot32-bfs --alphas {{alphas}} --quick --queries-per-thread 1000000 > eval/cuckoo-twohot.csv"'
-    scp ae-new:{{remote_repo}}/eval/cuckoo-twohot.csv eval/cuckoo-twohot.csv
-    python3 scripts/merge_bench.py eval/latest-hellman.csv eval/cuckoo-twohot.csv ""
-    cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
+    just bench-twohot-v2-hellman "{{ns}}" "{{alphas}}" "inline-twohot-cuckoo-lazy-bfs,quotient-lazy-32-twohot32-bfs"
+
 
 report-cuckoo-bfs:
     python3 scripts/report_cuckoo_bfs.py > eval/cuckoo-bfs-report.md
+
+# Focused comparison of cheap 2-hot lookup against matching 1-hot BFS baselines.
+bench-twohot-v2-hellman ns="1000000,16000000" alphas="0.9,0.95" methods="inline-onehot-cuckoo-lazy-bfs,quotient-lazy-32-onehot-bfs,inline-twohot-cuckoo-lazy-bfs,quotient-lazy-32-twohot32-bfs":
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=00:30:00 --cpu-freq=2551000:UserSpace --output=eval/.cuckoo-twohot-v2-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; srun --cpu-freq=2551000:UserSpace cargo rustc --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- -C target-feature=+avx512f,+avx512bw && srun --cpu-freq=2551000:UserSpace ../target-hellman/release/static_hash_set --ns {{ns}} --threads 1,16,192 --only {{methods}} --alphas {{alphas}} --quick --queries-per-thread 1000000 > eval/cuckoo-twohot-v2.csv"'
+    scp ae-new:{{remote_repo}}/eval/cuckoo-twohot-v2.csv eval/cuckoo-twohot-v2.csv
+    python3 scripts/merge_bench.py eval/latest-hellman.csv eval/cuckoo-twohot-v2.csv "" --rename "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>" "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS> v2" --rename "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS>" "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS> v2"
+    cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html

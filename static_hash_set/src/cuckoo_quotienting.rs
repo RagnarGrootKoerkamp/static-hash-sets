@@ -24,7 +24,7 @@
 mod bfs;
 
 pub use crate::cuckoo::Mode;
-use crate::{T, traits::HashSet};
+use crate::{traits::HashSet, T};
 
 /// Bit width of the reversible hash domain.
 pub const KEY_BITS: u32 = 64;
@@ -97,7 +97,11 @@ struct PackedBin<const P: usize, const FILTER: bool = false>([u64; 8]);
 impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     fn storage_bits(bits: usize) -> usize {
         if FILTER && P == 32 && bits <= 56 {
-            if bits <= 48 { 48 } else { 56 }
+            if bits <= 48 {
+                48
+            } else {
+                56
+            }
         } else {
             bits
         }
@@ -165,7 +169,8 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
         if FILTER {
             // The final word is reserved for the spill summary, so a second
             // word is always available for reads of packed entry data.
-            let pair = self.0[word] as u128 | ((self.0.get(word + 1).copied().unwrap_or(0) as u128) << 64);
+            let pair =
+                self.0[word] as u128 | ((self.0.get(word + 1).copied().unwrap_or(0) as u128) << 64);
             return ((pair >> shift) as u64) & (u64::MAX >> (64 - bits));
         }
         let mut value = self.0[word] >> shift;
@@ -500,8 +505,14 @@ pub struct CuckooSet<
     summary_ready: bool,
 }
 
-impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, const BFS: bool, const FILTER32: bool>
-    CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32>
+impl<
+        const MODE: u8,
+        const PREFIX: usize,
+        const EF: bool,
+        const FILTER: bool,
+        const BFS: bool,
+        const FILTER32: bool,
+    > CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32>
 {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
@@ -524,7 +535,10 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
     }
     fn with_capacity(slot_ratio: f32, n: usize) -> Self {
         assert!(slot_ratio >= 1.0);
-        assert!(!FILTER32 || (FILTER && PREFIX == 32 && !EF), "32-bit spill filter requires the byte layout");
+        assert!(
+            !FILTER32 || (FILTER && PREFIX == 32 && !EF),
+            "32-bit spill filter requires the byte layout"
+        );
         assert!(matches!(PREFIX, 0 | 8 | 16 | 32));
         assert!(
             cfg!(target_endian = "little"),
@@ -726,9 +740,12 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
     fn spill_bits(hash: u64) -> u64 {
         if FILTER32 {
             let first = hash & 31;
-            let second = (first + 1 + (hash >> 32) % 31) & 31;
+            let second = (hash >> 5) & 31;
+            // shift, to move them to the final bytes of the last u64.
             ((1u64 << first) | (1u64 << second)) << 32
-        } else { 1u64 << (hash & 63) }
+        } else {
+            1u64 << (hash & 63)
+        }
     }
 
     #[inline(always)]
@@ -739,7 +756,11 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
 
     fn rebuild_spill(&mut self) {
         for bin in self.table.iter_mut() {
-            if FILTER32 { bin.0[7] &= u32::MAX as u64; } else { bin.0[7] = 0; }
+            if FILTER32 {
+                bin.0[7] &= u32::MAX as u64;
+            } else {
+                bin.0[7] = 0;
+            }
         }
         for idx in 0..self.num_bins {
             for slot in 0..self.slots {
@@ -876,7 +897,11 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
         }
         if FILTER && self.summary_ready {
             for bin in self.table.iter_mut() {
-                bin.0[7] |= if FILTER32 { (u32::MAX as u64) << 32 } else { u64::MAX };
+                bin.0[7] |= if FILTER32 {
+                    (u32::MAX as u64) << 32
+                } else {
+                    u64::MAX
+                };
             }
             self.summary_ready = false;
         }
@@ -985,8 +1010,14 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
     }
 }
 
-impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, const BFS: bool, const FILTER32: bool>
-    HashSet for CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32>
+impl<
+        const MODE: u8,
+        const PREFIX: usize,
+        const EF: bool,
+        const FILTER: bool,
+        const BFS: bool,
+        const FILTER32: bool,
+    > HashSet for CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32>
 {
     fn name(&self) -> &'static str {
         if FILTER32 {

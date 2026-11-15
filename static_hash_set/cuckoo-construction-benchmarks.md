@@ -74,3 +74,34 @@ the quotient variant is about 8%/5% slower. These are geometric means across
 
 Future benchmark defaults remain 90%/95%. The 98% data above belongs to the
 already-submitted historical comparison.
+
+## Two-hot v2: shared lookup flow and cheap bit selection
+
+Inline two-hot now uses the same spill-conditioned lookup flow as one-hot,
+including the token-based prefetch path. Both filters select positions directly
+from adjacent bit slices of the existing primary hash: bits 0..5 and 6..11
+for 64 bits; bits 0..4 and 5..9 for 32 bits. Coincident positions are allowed,
+as requested. There is no modulo operation or collision correction. Such a
+key/query occasionally uses a one-bit mask (probability 1/64 or 1/32 under a
+uniform hash). The earlier distinct-bit probability estimates describe v1's
+idealization, rather than this collision-allowed distribution.
+
+The shared fuzz driver passed with one million keys, three seeds, and 90%/95%
+loads. A focused Hellman run (job 2176) covered 1M/16M keys, all three thread
+counts, 90%/95% load, and matching one-hot BFS baselines. Raw data is saved as
+`eval/cuckoo-twohot-v2-focused.csv`. The full changed-method sweep is job 2177;
+its output is `eval/cuckoo-twohot-v2.csv`. Plot series are labelled v2, preserving
+the earlier measurements. `just bench-twohot-hellman` now runs the current v2
+code; `just bench-twohot-v2-hellman` allows method selection for focused checks.
+
+Focused 95% load, single-thread loop, 50%-positive queries, ns/query:
+
+| Table | n | Previous two-hot | v2 two-hot | Matching one-hot BFS |
+|---|---:|---:|---:|---:|
+| Inline | 1M | 22.43 | 8.40 | 8.39 |
+| Inline | 16M | 31.61 | 18.98 | 17.02 |
+| Quotient | 1M | 11.00 | 8.19 | 8.27 |
+| Quotient | 16M | 25.46 | 21.91 | 20.00 |
+
+These are separate quick runs; small timing differences should not be treated
+as statistically established improvements.
