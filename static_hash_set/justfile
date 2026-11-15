@@ -96,3 +96,10 @@ placement-filter n="1000000" seeds="1,2,3" bits="20,24,28,32,40,64" negatives="1
 
 report-filter:
     python3 experiments/report_filter.py > experiments/filter-report.md
+
+# Approximate quotient filters retaining 32 hash bits before quotienting.
+bench-filter32-hellman ns=sizes alphas="0.9,0.95":
+    ssh -F ~/.ssh/config ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.cuckoo-filter32-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; srun --cpu-freq=2551000:UserSpace cargo rustc --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- -C target-feature=+avx512f,+avx512bw && srun --cpu-freq=2551000:UserSpace ../target-hellman/release/static_hash_set --ns {{ns}} --threads 1,16,192 --only quotient-filter32-onehot-bfs,quotient-filter32-twohot32-bfs --alphas {{alphas}} --quick --queries-per-thread 1000000 > eval/cuckoo-filter32.csv"'
+    scp -F ~/.ssh/config ae-new:{{remote_repo}}/eval/cuckoo-filter32.csv eval/cuckoo-filter32.csv
+    python3 scripts/merge_bench.py eval/latest-hellman.csv eval/cuckoo-filter32.csv ""
+    cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html

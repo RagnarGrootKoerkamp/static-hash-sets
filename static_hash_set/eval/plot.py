@@ -117,6 +117,8 @@ cpu_names = {
 queries = ["q01", "q50", "q99"]
 
 label_color = {
+    "CuckooQuotientFilter<Lazy,Hash32,OneHot64,BFS>": "#6D4C41",
+    "CuckooQuotientFilter<Lazy,Hash32,TwoHot32,BFS>": "#C62828",
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>": "#1565C0",
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>": "#2E7D32",
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>": "#6A1B9A",
@@ -178,6 +180,8 @@ label_color = {
 }
 
 variant_load_colors = {
+    "CuckooQuotientFilter<Lazy,Hash32,OneHot64,BFS>": {0.9: "#BCAAA4", 0.95: "#6D4C41"},
+    "CuckooQuotientFilter<Lazy,Hash32,TwoHot32,BFS>": {0.9: "#EF9A9A", 0.95: "#C62828"},
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS> v2": {0.9: "#9575CD", 0.95: "#4527A0"},
     "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS> v2": {0.9: "#4DD0E1", 0.95: "#00838F"},
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>": {0.95: "#6A1B9A", 0.98: "#BA68C8"},
@@ -210,6 +214,8 @@ def series_color(name, alpha):
     return shades.get(round(alpha, 2), label_color[name])
 
 display_name = {
+    "CuckooQuotientFilter<Lazy,Hash32,OneHot64,BFS>": "Quotient filter (32 retained bits) + 1-hot BFS",
+    "CuckooQuotientFilter<Lazy,Hash32,TwoHot32,BFS>": "Quotient filter (32 retained bits) + 2-hot BFS",
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS> v2": "2-hot 64-bit bumped BFS v2 (cheap bits)",
     "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS> v2": "Quotient + 2-hot 32-bit BFS v2 (cheap bits)",
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>": "2-hot 64-bit bumped BFS",
@@ -368,8 +374,10 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
     data = data[~bumped | inline_one_hot]
     data = data[~data["h"].str.contains("<Eager", regex=False)]
     data = data[data["h"] != "CuckooSet<Lazy>"]
-    quotienting = data["h"].str.startswith("CuckooQuotientSet<")
+    quotienting = data["h"].str.startswith("CuckooQuotient")
     lazy_32_one_hot = data["h"].isin([
+        "CuckooQuotientFilter<Lazy,Hash32,OneHot64,BFS>",
+        "CuckooQuotientFilter<Lazy,Hash32,TwoHot32,BFS>",
         "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS> v2",
         "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS>",
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>",
@@ -415,7 +423,7 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
             row_data = data[
                 (data["threads"] == thread) & data["metric"].isin(trace_metrics)
             ]
-            visible_row_data = row_data[~row_data["h"].str.startswith("CuckooQuotientSet<")]
+            visible_row_data = row_data[~row_data["h"].str.startswith("CuckooQuotient")]
             row_y_max = max(float(visible_row_data[query].max()) for query in queries) * 1.05
             for col in range(1, len(queries) + 1):
                 fig.update_yaxes(range=[0, row_y_max], autorange=False, fixedrange=True, row=row, col=col)
@@ -457,7 +465,7 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
                                 y=subset[query],
                                 customdata=hover_data.to_numpy(),
                                 mode="lines",
-                                visible=("legendonly" if h.startswith("CuckooQuotientSet<") else True),
+                                visible=("legendonly" if h.startswith("CuckooQuotient") else True),
                                 name=interactive_label(h, alpha, subset) + batch_label,
                                 legendgroup=(
                                     f"{h}|{alpha}|{trace_metric}"

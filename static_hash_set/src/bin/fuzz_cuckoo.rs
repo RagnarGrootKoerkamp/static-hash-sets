@@ -39,7 +39,10 @@ fn main() {
         for alpha in [0.9, 0.95] {
             let sets: Vec<Box<dyn HashSet>> = vec![
                 Box::new(Inline::<1, false, false, true>::new(1. / alpha, &input)),
-                Box::new(Quotient::<1, 32, false, true, true, true>::new(1. / alpha, &input)),
+                Box::new(Quotient::<1, 32, false, true, true, true>::new(
+                    1. / alpha,
+                    &input,
+                )),
                 Box::new(Inline::<1, true>::new(1. / alpha, &input)),
                 Box::new(Inline::<1, true, false, true>::new(1. / alpha, &input)),
                 Box::new(Quotient::<1, 32, false, true>::new(1. / alpha, &input)),
@@ -61,6 +64,64 @@ fn main() {
                 assert_eq!(set.count_prefetch(&keys), n);
                 assert_eq!(set.count_prefetch2(&keys), n);
                 eprintln!("{}: seed {seed}, alpha {alpha}, n {n}: passed", set.name());
+            }
+            let filters: Vec<(u32, Box<dyn HashSet>)> = vec![
+                (
+                    24,
+                    Box::new(Quotient::<1, 32, false, true, true, false, 24>::new(
+                        1. / alpha,
+                        &input,
+                    )),
+                ),
+                (
+                    24,
+                    Box::new(Quotient::<1, 32, false, true, true, true, 24>::new(
+                        1. / alpha,
+                        &input,
+                    )),
+                ),
+                (
+                    32,
+                    Box::new(Quotient::<1, 32, false, true, true, false, 32>::new(
+                        1. / alpha,
+                        &input,
+                    )),
+                ),
+                (
+                    32,
+                    Box::new(Quotient::<1, 32, false, true, true, true, 32>::new(
+                        1. / alpha,
+                        &input,
+                    )),
+                ),
+                (
+                    40,
+                    Box::new(Quotient::<1, 32, false, true, true, true, 40>::new(
+                        1. / alpha,
+                        &input,
+                    )),
+                ),
+            ];
+            for (bits, filter) in filters {
+                for &key in &keys {
+                    assert!(
+                        filter.contains(key),
+                        "filter false negative: bits {bits}, seed {seed}, alpha {alpha}, key {key}"
+                    );
+                }
+                assert_eq!(filter.count_loop(&keys), n);
+                assert_eq!(filter.count_prefetch(&keys), n);
+                assert_eq!(filter.count_prefetch2(&keys), n);
+                let fp = absent
+                    .iter()
+                    .filter(|&&key| !expected.contains(&key) && filter.contains(key))
+                    .count();
+                eprintln!(
+                    "{}: bits {bits}, seed {seed}, alpha {alpha}, n {n}: passed, {fp}/{} negative queries accepted, {:.3} bits/key",
+                    filter.name(),
+                    absent.len(),
+                    filter.allocation_size() as f64 * 8. / n as f64
+                );
             }
         }
     }

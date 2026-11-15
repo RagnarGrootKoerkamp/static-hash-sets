@@ -109,6 +109,9 @@ fn selected_threads() -> Vec<usize> {
 fn implementation_selected(name: &str) -> bool {
     let args: Vec<_> = std::env::args().collect();
     let Some(index) = args.iter().position(|arg| arg == "--only") else {
+        if name.starts_with("quotient-filter") {
+            return false;
+        }
         return !name.starts_with("quotient-")
             || (name.contains("onehot") && !name.split('-').any(|part| part == "ef"));
     };
@@ -325,6 +328,20 @@ fn main() {
                 ))
             },
             vec![0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-filter32-onehot-bfs") { return None; }
+                Some(Box::new(CuckooQuotientSet::<{ Mode::Lazy as u8 },32,false,true,true,false,32>::new(1./alpha,keys)))
+            },
+            vec![0.9,0.95],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-filter32-twohot32-bfs") { return None; }
+                Some(Box::new(CuckooQuotientSet::<{ Mode::Lazy as u8 },32,false,true,true,true,32>::new(1./alpha,keys)))
+            },
+            vec![0.9,0.95],
         ),
         (
             |alpha: f32, keys: &[T]| {

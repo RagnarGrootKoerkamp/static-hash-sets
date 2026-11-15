@@ -24,7 +24,7 @@
 mod bfs;
 
 pub use crate::cuckoo::Mode;
-use crate::{traits::HashSet, T};
+use crate::{T, traits::HashSet};
 
 /// Bit width of the reversible hash domain.
 pub const KEY_BITS: u32 = 64;
@@ -97,11 +97,7 @@ struct PackedBin<const P: usize, const FILTER: bool = false>([u64; 8]);
 impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     fn storage_bits(bits: usize) -> usize {
         if FILTER && P == 32 && bits <= 56 {
-            if bits <= 48 {
-                48
-            } else {
-                56
-            }
+            if bits <= 48 { 48 } else { 56 }
         } else {
             bits
         }
@@ -486,6 +482,12 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     }
 }
 
+/// Static quotient filter retaining HASH_BITS of each input hash before
+/// quotienting. Defaults to a 32-bit, byte-packed BFS filter with a 32-bit
+/// two-hot spill summary. All 64 input key bits still participate in hashing.
+pub type CuckooFilter<const HASH_BITS: u32 = 32, const FILTER32: bool = true> =
+    CuckooSet<{ Mode::Lazy as u8 }, 32, false, true, true, FILTER32, HASH_BITS>;
+
 pub struct CuckooSet<
     const MODE: u8,
     const PREFIX: usize = 16,
@@ -493,6 +495,7 @@ pub struct CuckooSet<
     const FILTER: bool = false,
     const BFS: bool = false,
     const FILTER32: bool = false,
+    const HASH_BITS: u32 = 64,
 > {
     pub slot_ratio: f32,
     num_bins: usize,
@@ -506,16 +509,21 @@ pub struct CuckooSet<
 }
 
 impl<
-        const MODE: u8,
-        const PREFIX: usize,
-        const EF: bool,
-        const FILTER: bool,
-        const BFS: bool,
-        const FILTER32: bool,
-    > CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32>
+    const MODE: u8,
+    const PREFIX: usize,
+    const EF: bool,
+    const FILTER: bool,
+    const BFS: bool,
+    const FILTER32: bool,
+    const HASH_BITS: u32,
+> CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32, HASH_BITS>
 {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
+        if HASH_BITS < 64 {
+            this.build_fingerprint_filter(keys);
+            return this;
+        }
         if BFS {
             assert!(!EF, "BFS construction requires unsorted buckets");
             let mut workspace = bfs::BfsConstruction::new(this.num_bins);
@@ -535,6 +543,11 @@ impl<
     }
     fn with_capacity(slot_ratio: f32, n: usize) -> Self {
         assert!(slot_ratio >= 1.0);
+        assert!((8..=64).contains(&HASH_BITS));
+        assert!(
+            HASH_BITS == 64 || (BFS && FILTER && PREFIX == 32 && !EF),
+            "truncated filters require byte-packed BFS construction"
+        );
         assert!(
             !FILTER32 || (FILTER && PREFIX == 32 && !EF),
             "32-bit spill filter requires the byte layout"
@@ -594,9 +607,10 @@ impl<
     fn table_layout(capacity: usize) -> (usize, usize, usize, usize) {
         let mut low = 2usize;
         let mut high = capacity.div_ceil(if FILTER { 7 } else { 8 }).max(2);
+        high = high.min(((1u128 << HASH_BITS) - 1) as usize);
         while low < high {
             let mid = low + (high - low) / 2;
-            let bits = KEY_BITS as usize + 1 - mid.ilog2() as usize;
+            let bits = HASH_BITS as usize + 1 - mid.ilog2() as usize;
             let (slots, _) = Self::bin_layout(bits);
             if mid * slots >= capacity {
                 high = mid;
@@ -604,9 +618,83 @@ impl<
                 low = mid + 1;
             }
         }
-        let bits = KEY_BITS as usize + 1 - low.ilog2() as usize;
+        let bits = HASH_BITS as usize + 1 - low.ilog2() as usize;
         let (slots, low_bits) = Self::bin_layout(bits);
+        assert!(low * slots >= capacity, "too many keys for retained hash width");
         (low, bits, slots, low_bits)
+    }
+
+    /// Retained hash width before quotienting; 64 means exact membership.
+    pub fn retained_hash_bits(&self) -> u32 {
+        HASH_BITS
+    }
+    /// Logical quotient bits including the primary/secondary marker.
+    pub fn bits_per_entry(&self) -> usize {
+        self.entry_bits
+    }
+    pub fn slots_per_bin(&self) -> usize {
+        self.slots
+    }
+
+    // Full keys are temporary construction data. Never attempt to invert a
+    // truncated quotient to recover a displacement victim's original key.
+    fn build_fingerprint_filter(&mut self, keys: &[T]) {
+        let mut full = vec![0u64; self.num_bins * self.slots];
+        let mut workspace = bfs::BfsConstruction::new(self.num_bins);
+        for &key in keys {
+            assert_ne!(key, 0, "zero keys are not supported");
+            let primary = self.bin_idx_1(key);
+            let secondary = self.bin_idx_2(key);
+            if full[primary * self.slots..(primary + 1) * self.slots].contains(&key)
+                || full[secondary * self.slots..(secondary + 1) * self.slots].contains(&key)
+            {
+                continue;
+            }
+            let roots = [primary, secondary];
+            let roots = if self.entry(key, false) == 0 {
+                &roots[1..]
+            } else {
+                &roots[..]
+            };
+            let path = workspace.path(roots, self.slots, |bin, slot| {
+                let occupant = full[bin * self.slots + slot];
+                if occupant == 0 {
+                    return (true, None);
+                }
+                let p = self.bin_idx_1(occupant);
+                let s = self.bin_idx_2(occupant);
+                let stored_secondary = bin != p || self.entry(occupant, false) == 0;
+                let next_secondary = !stored_secondary;
+                let next = if next_secondary { s } else { p };
+                (
+                    false,
+                    (self.entry(occupant, next_secondary) != 0).then_some(next),
+                )
+            });
+            for pair in path.windows(2) {
+                let (dst, ds) = pair[0];
+                let (src, ss) = pair[1];
+                full[dst * self.slots + ds] = full[src * self.slots + ss];
+            }
+            let &(root, slot) = path.last().unwrap();
+            full[root * self.slots + slot] = key;
+            self.len += 1;
+        }
+        for bin in 0..self.num_bins {
+            for slot in 0..self.slots {
+                let key = full[bin * self.slots + slot];
+                if key == 0 {
+                    continue;
+                }
+                let primary = self.bin_idx_1(key);
+                let secondary = bin != primary || self.entry(key, false) == 0;
+                self.set_entry(bin, slot, self.entry(key, secondary));
+                if secondary {
+                    self.table[primary].0[7] |= Self::spill_bits(Self::permute(key, false));
+                }
+            }
+        }
+        self.summary_ready = true;
     }
 
     pub fn allocation_size(&self) -> usize {
@@ -635,28 +723,43 @@ impl<
 
     #[inline(always)]
     fn product(&self, key: T, secondary: bool) -> u128 {
-        ((Self::permute(key, secondary) << PADDING_BITS) as u128) * self.num_bins as u128
+        self.product_from_hash(Self::permute(key, secondary))
+    }
+
+    #[inline(always)]
+    fn product_from_hash(&self, hash: u64) -> u128 {
+        ((hash >> (64 - HASH_BITS)) as u128) * self.num_bins as u128
+    }
+
+    #[inline(always)]
+    fn entry_from_product(&self, product: u128, secondary: bool) -> u64 {
+        let lower = (product & ((1u128 << HASH_BITS) - 1)) as u64;
+        ((lower >> (HASH_BITS as usize + 1 - self.entry_bits)) << 1) | secondary as u64
     }
 
     #[inline(always)]
     fn bin_idx_1(&self, key: T) -> usize {
         // FIXME: We should make this much simpler somehow.
-        (self.product(key, false) >> 64) as usize
+        (self.product(key, false) >> HASH_BITS) as usize
     }
 
     #[inline(always)]
     fn bin_idx_2(&self, key: T) -> usize {
         // FIXME: We should reuse the first hash as much as possible.
-        (self.product(key, true) >> 64) as usize
+        (self.product(key, true) >> HASH_BITS) as usize
     }
 
     #[inline(always)]
     fn entry(&self, key: T, secondary: bool) -> u64 {
         // Drop floor(log2(m)) low bits. Valid products are at least m apart.
-        (((self.product(key, secondary) as u64) >> (65 - self.entry_bits)) << 1) | secondary as u64
+        self.entry_from_product(self.product(key, secondary), secondary)
     }
 
     fn decode(&self, entry: u64, idx: usize) -> T {
+        assert_eq!(
+            HASH_BITS, 64,
+            "fingerprint filters cannot recover original keys"
+        );
         let lower_product =
             ((idx as u128) << 64) | (((entry >> 1) as u128) << (65 - self.entry_bits));
         // Round up to the unique valid product in the truncated interval.
@@ -738,6 +841,7 @@ impl<
 
     #[inline(always)]
     fn spill_bits(hash: u64) -> u64 {
+        let hash = hash >> (64 - HASH_BITS);
         if FILTER32 {
             let first = hash & 31;
             let second = (hash >> 5) & 31;
@@ -778,7 +882,7 @@ impl<
     #[inline(always)]
     pub fn prefetch_first(&self, key: T) -> usize {
         let hash = Self::permute(key, false);
-        let bin_idx = (((hash as u128) * self.num_bins as u128) >> 64) as usize;
+        let bin_idx = (self.product_from_hash(hash) >> HASH_BITS) as usize;
         prefetch_index::prefetch_index(&self.table, bin_idx);
         // Carry the hash so lazy lookup can reuse it for the quotient and spill bit.
         hash as usize
@@ -829,9 +933,9 @@ impl<
                 && self.table[bin1].contains_bytes(entry, self.entry_bits, &self.byte_masks);
         }
 
-        let secondary_product = (Self::permute(key, true) as u128) * self.num_bins as u128;
-        let bin2 = (secondary_product >> 64) as usize;
-        let secondary_entry = (((secondary_product as u64) >> (65 - self.entry_bits)) << 1) | 1;
+        let secondary_product = self.product(key, true);
+        let bin2 = (secondary_product >> HASH_BITS) as usize;
+        let secondary_entry = self.entry_from_product(secondary_product, true);
         let primary_match =
             entry != 0 && self.table[bin1].contains_bytes(entry, self.entry_bits, &self.byte_masks);
         primary_match
@@ -844,9 +948,9 @@ impl<
             return false;
         }
         let hash = token as u64;
-        let product = (hash as u128) * self.num_bins as u128;
-        let bin1 = (product >> 64) as usize;
-        let entry = ((product as u64) >> (65 - self.entry_bits)) << 1;
+        let product = self.product_from_hash(hash);
+        let bin1 = (product >> HASH_BITS) as usize;
+        let entry = self.entry_from_product(product, false);
         if self.byte_layout() {
             return self.contains_lazy_byte_layout(key, hash, bin1, entry);
         }
@@ -891,6 +995,10 @@ impl<
 
     #[inline(always)]
     pub fn insert(&mut self, key: T) {
+        assert_eq!(
+            HASH_BITS, 64,
+            "fingerprint filters are constructed from complete key slices"
+        );
         assert_ne!(key, 0, "zero keys are not supported");
         if self.contains_eager(key) {
             return;
@@ -995,6 +1103,10 @@ impl<
     }
 
     pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        assert_eq!(
+            HASH_BITS, 64,
+            "fingerprint filters do not retain original keys for iteration"
+        );
         self.table.iter().enumerate().flat_map(move |(idx, _)| {
             (0..self.slots).filter_map(move |slot| {
                 let entry = self.get_entry(idx, slot);
@@ -1011,15 +1123,26 @@ impl<
 }
 
 impl<
-        const MODE: u8,
-        const PREFIX: usize,
-        const EF: bool,
-        const FILTER: bool,
-        const BFS: bool,
-        const FILTER32: bool,
-    > HashSet for CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32>
+    const MODE: u8,
+    const PREFIX: usize,
+    const EF: bool,
+    const FILTER: bool,
+    const BFS: bool,
+    const FILTER32: bool,
+    const HASH_BITS: u32,
+> HashSet for CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32, HASH_BITS>
 {
     fn name(&self) -> &'static str {
+        if HASH_BITS < 64 {
+            if Mode::from(MODE) == Mode::Eager {
+                return "CuckooQuotientFilter<Eager,TruncatedHash,BFS>";
+            }
+            return match (HASH_BITS, FILTER32) {
+                (32, true) => "CuckooQuotientFilter<Lazy,Hash32,TwoHot32,BFS>",
+                (32, false) => "CuckooQuotientFilter<Lazy,Hash32,OneHot64,BFS>",
+                _ => "CuckooQuotientFilter<TruncatedHash,BFS>",
+            };
+        }
         if FILTER32 {
             assert!(BFS && MODE == Mode::Lazy as u8);
             return "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS>";
@@ -1070,7 +1193,10 @@ impl<
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = CuckooSet::<MODE, PREFIX, EF, FILTER, BFS, FILTER32>::new(self.slot_ratio, keys);
+        let h = CuckooSet::<MODE, PREFIX, EF, FILTER, BFS, FILTER32, HASH_BITS>::new(
+            self.slot_ratio,
+            keys,
+        );
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {
