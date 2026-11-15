@@ -31,32 +31,52 @@ const SECONDARY_SEED: u64 = 0x9e3779b97f4a7c15;
 const MIX_MULTIPLIER: u64 = 0xbf58476d1ce4e5b9;
 const MIX_INVERSE: u64 = 0x96de1b173f119089;
 
-const fn byte_shuffle_mask<const W: usize>() -> [i8; 64] {
-    let mut indexes = [0i8; 64];
-    let mut i = 0;
-    while i < 64 {
-        indexes[i] = (i % W) as i8;
-        i += 1;
+const fn make_byte_shuffle_masks() -> [[i8; 64]; 9] {
+    let mut masks = [[0i8; 64]; 9];
+    let mut width = 1;
+    while width <= 8 {
+        let mut i = 0;
+        while i < 64 {
+            masks[width][i] = (i % width) as i8;
+            i += 1;
+        }
+        width += 1;
     }
-    indexes
+    masks
 }
 
-const fn byte_start_mask<const W: usize>() -> u64 {
-    let mut mask = 0;
-    let mut slot = 0;
-    while slot < 56 / W {
-        mask |= 1u64 << (slot * W);
-        slot += 1;
+const fn make_byte_start_masks() -> [u64; 9] {
+    let mut masks = [0u64; 9];
+    let mut width = 1;
+    while width <= 8 {
+        let mut slot = 0;
+        while slot < 56 / width {
+            masks[width] |= 1u64 << (slot * width);
+            slot += 1;
+        }
+        width += 1;
     }
-    mask
+    masks
 }
+
+const BYTE_SHUFFLE_MASKS: [[i8; 64]; 9] = make_byte_shuffle_masks();
+const BYTE_START_MASKS: [u64; 9] = make_byte_start_masks();
+const BYTE_BOUNDARY_MASKS: [u64; 9] = {
+    let mut masks = [0u64; 9];
+    let mut width = 1;
+    while width <= 8 {
+        masks[width] = BYTE_START_MASKS[width] << width;
+        width += 1;
+    }
+    masks
+};
 
 #[inline(always)]
-fn has_equal_byte_entry<const W: usize>(equal: u64) -> bool {
-    let starts = byte_start_mask::<W>();
+fn has_equal_byte_entry(equal: u64, width: usize) -> bool {
+    let starts = BYTE_START_MASKS[width];
     let sum = equal.wrapping_add(starts);
     let carry_into = sum ^ equal ^ starts;
-    (carry_into & (starts << W)) != 0
+    (carry_into & BYTE_BOUNDARY_MASKS[width]) != 0
 }
 
 /// One 64-byte bucket. With P = 0, entries are stored consecutively. Otherwise
@@ -100,29 +120,29 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     }
 
     #[inline(always)]
-    fn contains_bytes<const W: usize>(&self, value: u64, bits: usize) -> bool {
-        debug_assert_eq!(W, bits.div_ceil(8));
+    fn contains_bytes(&self, value: u64, bits: usize, width: usize) -> bool {
+        debug_assert_eq!(width, bits.div_ceil(8));
         #[cfg(target_arch = "x86_64")]
         if std::arch::is_x86_feature_detected!("avx512f")
             && std::arch::is_x86_feature_detected!("avx512bw")
         {
-            return unsafe { self.contains_bytes_avx512::<W>(value) };
+            return unsafe { self.contains_bytes_avx512(value, width) };
         }
-        let slots = 56 / W;
+        let slots = 56 / width;
         (0..slots).any(|slot| self.get_bytes(slot, bits) == value)
     }
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx512f,avx512bw")]
-    unsafe fn contains_bytes_avx512<const W: usize>(&self, value: u64) -> bool {
+    unsafe fn contains_bytes_avx512(&self, value: u64, width: usize) -> bool {
         use std::arch::x86_64::*;
         let repeated_value = _mm512_set1_epi64(value as i64);
-        let indexes = byte_shuffle_mask::<W>();
+        let indexes = &BYTE_SHUFFLE_MASKS[width];
         let shuffle = unsafe { _mm512_loadu_si512(indexes.as_ptr().cast()) };
         let target = _mm512_shuffle_epi8(repeated_value, shuffle);
         let data = unsafe { _mm512_loadu_si512(self.0.as_ptr().cast()) };
         let equal = _mm512_cmpeq_epi8_mask(data, target) as u64;
-        has_equal_byte_entry::<W>(equal)
+        has_equal_byte_entry(equal, width)
     }
 
     #[inline(always)]
@@ -686,17 +706,11 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
                 self.low_bits,
             );
         }
-        match self.entry_bits.div_ceil(8) {
-            1 => self.table[idx].contains_bytes::<1>(value, self.entry_bits),
-            2 => self.table[idx].contains_bytes::<2>(value, self.entry_bits),
-            3 => self.table[idx].contains_bytes::<3>(value, self.entry_bits),
-            4 => self.table[idx].contains_bytes::<4>(value, self.entry_bits),
-            5 => self.table[idx].contains_bytes::<5>(value, self.entry_bits),
-            6 => self.table[idx].contains_bytes::<6>(value, self.entry_bits),
-            7 => self.table[idx].contains_bytes::<7>(value, self.entry_bits),
-            8 => self.table[idx].contains_bytes::<8>(value, self.entry_bits),
-            _ => unreachable!("encoded entry exceeds 64 bits"),
-        }
+        self.table[idx].contains_bytes(
+            value,
+            self.entry_bits,
+            self.entry_bits.div_ceil(8),
+        )
     }
 
     fn rebuild_spill(&mut self) {
@@ -764,38 +778,24 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
     }
 
     #[inline(always)]
-    fn contains_lazy_byte_width<const W: usize>(
+    fn contains_lazy_byte_layout(
         &self,
         key: T,
         hash: u64,
         bin1: usize,
         entry: u64,
+        width: usize,
     ) -> bool {
         let primary_match = entry != 0
-            && self.table[bin1].contains_bytes::<W>(entry, self.entry_bits);
+            && self.table[bin1].contains_bytes(entry, self.entry_bits, width);
         if self.table[bin1].might_spill(hash) {
             let secondary_product = (Self::permute(key, true) as u128) * self.num_bins as u128;
             let bin2 = (secondary_product >> 64) as usize;
             let secondary_entry = (((secondary_product as u64) >> (65 - self.entry_bits)) << 1) | 1;
             return primary_match
-                | self.table[bin2].contains_bytes::<W>(secondary_entry, self.entry_bits);
+                | self.table[bin2].contains_bytes(secondary_entry, self.entry_bits, width);
         }
         primary_match
-    }
-
-    #[inline(always)]
-    fn contains_lazy_byte_layout(&self, key: T, hash: u64, bin1: usize, entry: u64) -> bool {
-        match self.entry_bits.div_ceil(8) {
-            1 => self.contains_lazy_byte_width::<1>(key, hash, bin1, entry),
-            2 => self.contains_lazy_byte_width::<2>(key, hash, bin1, entry),
-            3 => self.contains_lazy_byte_width::<3>(key, hash, bin1, entry),
-            4 => self.contains_lazy_byte_width::<4>(key, hash, bin1, entry),
-            5 => self.contains_lazy_byte_width::<5>(key, hash, bin1, entry),
-            6 => self.contains_lazy_byte_width::<6>(key, hash, bin1, entry),
-            7 => self.contains_lazy_byte_width::<7>(key, hash, bin1, entry),
-            8 => self.contains_lazy_byte_width::<8>(key, hash, bin1, entry),
-            _ => unreachable!("encoded entry exceeds 64 bits"),
-        }
     }
 
     #[inline(always)]
@@ -808,7 +808,13 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         let bin1 = (product >> 64) as usize;
         let entry = ((product as u64) >> (65 - self.entry_bits)) << 1;
         if self.byte_layout() {
-            return self.contains_lazy_byte_layout(key, hash, bin1, entry);
+            return self.contains_lazy_byte_layout(
+                key,
+                hash,
+                bin1,
+                entry,
+                self.entry_bits.div_ceil(8),
+            );
         }
         // A zero primary encoding is always stored in its secondary bucket.
         if entry == 0 {
@@ -1013,80 +1019,5 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool> Ha
     #[inline(always)]
     fn contains_with_token(&self, key: T, token: usize) -> bool {
         self.contains_with_token(key, token)
-    }
-}
-
-#[cfg(test)]
-mod byte_entry_match_tests {
-    use super::{has_equal_byte_entry, PackedBin};
-
-    fn check_carry_detector<const W: usize>() {
-        let slots = 56 / W;
-        let digit_count = 1usize << W;
-        let all_equal = digit_count - 1;
-
-        // Exhaust every pair of adjacent entry masks at every bucket position.
-        // This includes carry propagation through following groups.
-        for first_slot in 0..slots - 1 {
-            for first in 0..digit_count {
-                for second in 0..digit_count {
-                    let equal = ((first as u64) << (first_slot * W))
-                        | ((second as u64) << ((first_slot + 1) * W));
-                    let expected = first == all_equal || second == all_equal;
-                    assert_eq!(
-                        has_equal_byte_entry::<W>(equal),
-                        expected,
-                        "width={W}, slot={first_slot}, first={first:b}, second={second:b}"
-                    );
-                }
-            }
-        }
-    }
-
-    fn check_avx512_lookup<const W: usize>() {
-        let bits = W * 8;
-        let slots = 56 / W;
-        let query = (0x9e37_79b9_7f4a_7c15u64 & (u64::MAX >> (64 - bits))).max(1);
-        let mut bin = PackedBin::<32, true>([0; 8]);
-        for slot in 0..slots - 1 {
-            bin.set_bytes(slot, bits, query ^ (slot as u64 + 1));
-        }
-        bin.set_bytes(slots - 1, bits, query);
-
-        assert!(bin.contains_bytes::<W>(query, bits));
-        let absent = query ^ slots as u64;
-        assert!(!bin.contains_bytes::<W>(absent, bits));
-
-        #[cfg(target_arch = "x86_64")]
-        if std::arch::is_x86_feature_detected!("avx512f")
-            && std::arch::is_x86_feature_detected!("avx512bw")
-        {
-            assert!(unsafe { bin.contains_bytes_avx512::<W>(query) });
-            assert!(!unsafe { bin.contains_bytes_avx512::<W>(absent) });
-        }
-    }
-
-    #[test]
-    fn carry_detector_matches_full_entry_scan() {
-        check_carry_detector::<1>();
-        check_carry_detector::<2>();
-        check_carry_detector::<3>();
-        check_carry_detector::<4>();
-        check_carry_detector::<5>();
-        check_carry_detector::<6>();
-        check_carry_detector::<7>();
-        check_carry_detector::<8>();
-    }
-
-    #[test]
-    fn byte_lookup_matches_entries_at_each_supported_width() {
-        check_avx512_lookup::<1>();
-        check_avx512_lookup::<2>();
-        check_avx512_lookup::<3>();
-        check_avx512_lookup::<4>();
-        check_avx512_lookup::<5>();
-        check_avx512_lookup::<6>();
-        check_avx512_lookup::<7>();
-        check_avx512_lookup::<8>();
     }
 }

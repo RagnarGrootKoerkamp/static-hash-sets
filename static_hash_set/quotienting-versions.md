@@ -23,5 +23,8 @@ bucket.
 - **v7:** Keeps v5's layout and AVX512BW compare. Adds the start mask to the
   byte equality mask and checks carry bits at entry boundaries. Any boundary
   carry implies at least one complete entry match. On Hellman it was 2–10%
-  faster than v6, but remained 2–12% slower than v4. The exhaustive mask test
-  and direct AVX512 lookup test passed on Hellman.
+  faster than v6, but remained 2–12% slower than v4.
+- **v8:** Keeps v7's carry detector, but makes the AVX512 matcher non-generic
+  over entry width. Compile-time shuffle, start, and boundary mask arrays are
+  indexed by the table's runtime width. Hellman was 2–9% faster than v7 in
+  every mode/thread combination except one-thread loop mode, which was 1% slower.
