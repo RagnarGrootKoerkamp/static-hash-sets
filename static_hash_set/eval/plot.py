@@ -178,7 +178,7 @@ variant_load_colors = {
     "GrowableRightCuckooSet": {0.7: "#9C179E", 0.9: "#D18AD4"},
     "FilteredCuckooSet<Lazy>": {0.7: "#009E73", 0.9: "#66C2A5"},
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#1F78B4", 0.9: "#80B1D3"},
-    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#D81B60", 0.9: "#F48FB1"},
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#D81B60", 0.9: "#F48FB1", 0.95: "#880E4F"},
     "InlineOneHotCuckooSet<Lazy,BumpedOnly> v2": {0.7: "#9B00FF", 0.9: "#DC72FF"},
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>": {0.7: "#F50057", 0.9: "#FF6090"},
     "SpillCuckooSet<Lazy,BeforePrimary,u8>": {0.7: "#6b21a8", 0.9: "#c4b5fd"},
@@ -189,6 +189,7 @@ variant_load_colors = {
     "PhfSet<PtrHash>": {0.7: "#FFD600", 0.9: "#FFEB66"},
     "kPhfSet<kPtrHash>": {0.7: "#0000FF", 0.9: "#0000FF", 0.95: "#0000FF"},
     "MockHashSet": {0.7: "#000000", 0.9: "#000000", 1.0: "#000000"},
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v11": {0.9: "#AD1457", 0.95: "#F06292"},
 }
 
 
@@ -335,6 +336,15 @@ def interactive_label(name, alpha, subset):
 
 
 def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, output_path=None):
+    if Path(name).name == "latest-hellman.csv":
+        old_quotient_versions = {
+            "CuckooQuotientSet<Lazy,32,SIMD,OneHot>",
+            *(
+                f"CuckooQuotientSet<Lazy,32,SIMD,OneHot> v{version}"
+                for version in range(2, 11)
+            ),
+        }
+        data = data[~data["h"].isin(old_quotient_versions)]
     bumped = data["h"].str.contains("BumpedOnly", regex=False)
     inline_one_hot = data["h"] == "InlineOneHotCuckooSet<Lazy,BumpedOnly>"
     data = data[~bumped | inline_one_hot]

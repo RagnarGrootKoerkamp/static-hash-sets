@@ -28,6 +28,22 @@ bench-floyd:
     scp ae-new:{{remote_repo}}/eval/latest-floyd.csv eval/latest-floyd.csv
     cd eval && python3 plot.py latest-floyd.csv mt --cpu floyd --output latest-floyd.html
 
+# Run one method on Floyd, replacing that method's rows in the combined CSV.
+bench-one-floyd method label="" rustflags="":
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=floyd --nodes=1 --ntasks=1 --cpus-per-task=128 --exclusive --mem=0 --time=02:00:00 --output=eval/.one-floyd-{{method}}-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-floyd; if [ -n \"{{rustflags}}\" ]; then srun cargo rustc --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- {{rustflags}} && srun ../target-floyd/release/static_hash_set --ns {{sizes}} --threads 1,16,128 --only {{method}} --quick --queries-per-thread 1000000 > eval/one-floyd-{{method}}.csv; else srun cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,128 --only {{method}} --quick --queries-per-thread 1000000 > eval/one-floyd-{{method}}.csv; fi"'
+    scp ae-new:{{remote_repo}}/eval/one-floyd-{{method}}.csv eval/one-floyd-{{method}}.csv
+    python3 scripts/merge_bench.py eval/latest-floyd.csv eval/one-floyd-{{method}}.csv "{{label}}"
+    cd eval && python3 plot.py latest-floyd.csv mt --cpu floyd --output latest-floyd.html
+
+# Compare the inline and quotienting 1-hot cuckoo filters at 90% and 95% load.
+bench-hellman-cuckoo-loads-95:
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.cuckoo-loads-95-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; srun --cpu-freq=2551000:UserSpace cargo rustc --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- -C target-feature=+avx512f,+avx512bw && srun --cpu-freq=2551000:UserSpace ../target-hellman/release/static_hash_set --ns {{sizes}} --threads 1,16,192 --only inline-onehot-cuckoo-lazy --alphas 0.9,0.95 --quick --queries-per-thread 1000000 > eval/one-hellman-inline-onehot-loads.csv && srun --cpu-freq=2551000:UserSpace ../target-hellman/release/static_hash_set --ns {{sizes}} --threads 1,16,192 --only quotient-lazy-32-onehot --alphas 0.9,0.95 --quick --queries-per-thread 1000000 > eval/one-hellman-quotient-loads.csv"'
+    scp ae-new:{{remote_repo}}/eval/one-hellman-inline-onehot-loads.csv eval/one-hellman-inline-onehot-loads.csv
+    scp ae-new:{{remote_repo}}/eval/one-hellman-quotient-loads.csv eval/one-hellman-quotient-loads.csv
+    python3 scripts/merge_bench.py eval/latest-hellman.csv eval/one-hellman-inline-onehot-loads.csv ""
+    python3 scripts/merge_bench.py eval/latest-hellman.csv eval/one-hellman-quotient-loads.csv " v11"
+    cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
+
 # Rebuild local plots from the current CSVs without running benchmarks.
 plot:
     cd eval && python3 plot.py latest.csv mt --cpu laptop --output latest.html
