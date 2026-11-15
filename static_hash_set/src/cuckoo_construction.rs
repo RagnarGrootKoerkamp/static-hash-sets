@@ -19,6 +19,7 @@ struct Experiment {
     priority: Vec<u64>,
     revealed: Vec<bool>,
     stamp: Vec<usize>,
+    bfs_generation: usize,
     parent: Vec<usize>,
     parent_slot: Vec<usize>,
     reveals: usize,
@@ -47,12 +48,14 @@ impl Experiment {
                 h[x][side] =
                     ((mix(x as u64 ^ mix(seed + side as u64)) as u128 * m as u128) >> 64) as usize;
             }
-            priority[x] =
-                if ["bfs-large", "oracle-shuffled", "bfs-forced"].contains(&algorithm.as_str()) {
-                    x as u64
-                } else {
-                    mix(x as u64 ^ mix(seed + 2))
-                };
+            priority[x] = if ["bfs-large", "oracle-shuffled", "bfs-forced"]
+                .contains(&algorithm.as_str())
+                || algorithm.starts_with("bfs-priority")
+            {
+                x as u64
+            } else {
+                mix(x as u64 ^ mix(seed + 2))
+            };
         }
         Self {
             n,
@@ -64,6 +67,7 @@ impl Experiment {
             priority,
             revealed: vec![false; n + 1],
             stamp: vec![0; m],
+            bfs_generation: 0,
             parent: vec![0; m],
             parent_slot: vec![0; m],
             reveals: 0,
@@ -89,10 +93,18 @@ impl Experiment {
     }
     // Exhaustive augmenting paths: failure certifies this graph cannot be placed.
     fn bfs(&mut self, x: u64) -> bool {
-        let tag = x as usize;
+        self.bfs_search(x, false)
+    }
+    fn bfs_search(&mut self, x: u64, secondary_only: bool) -> bool {
+        self.bfs_generation = self.bfs_generation.wrapping_add(1);
+        if self.bfs_generation == 0 {
+            self.stamp.fill(0);
+            self.bfs_generation = 1;
+        }
+        let tag = self.bfs_generation;
         let mut q = Vec::new();
         let candidates = self.h[x as usize];
-        let roots = if self.forced(x) {
+        let roots = if self.forced(x) || secondary_only {
             &candidates[1..]
         } else {
             &candidates[..]
@@ -112,15 +124,25 @@ impl Experiment {
                 while self.parent[b] != self.m {
                     let p = self.parent[b];
                     let t = self.parent_slot[b];
-                    self.bins[b][s] = self.bins[p][t];
+                    let moved = self.bins[p][t];
+                    if self.algorithm.starts_with("bfs-priority") && !self.first(moved, b) {
+                        self.revealed[moved as usize] = true;
+                    }
+                    self.bins[b][s] = moved;
                     s = t;
                     b = p;
                 }
                 self.bins[b][s] = x;
+                if self.algorithm.starts_with("bfs-priority") && !self.first(x, b) {
+                    self.revealed[x as usize] = true;
+                }
                 return true;
             }
             let mut order = [0, 1, 2, 3, 4, 5, 6, 7];
-            if self.algorithm == "bfs-large" || self.algorithm == "bfs-forced" {
+            if self.algorithm == "bfs-large"
+                || self.algorithm == "bfs-forced"
+                || self.algorithm.starts_with("bfs-priority")
+            {
                 // Prefer sending large primary keys to secondary. If a return
                 // to primary is necessary, prefer returning a small key.
                 order.sort_unstable_by_key(|&s| {
@@ -173,7 +195,36 @@ impl Experiment {
             }
         }
     }
+    // Make the priority decision at a full primary bucket before considering
+    // the incoming key's secondary. BFS then finds space for the victim.
+    fn insert_priority_evict(&mut self, x: u64) -> bool {
+        let primary = self.h[x as usize][0];
+        if let Some(slot) = self.bins[primary].iter().position(|&key| key == 0) {
+            self.bins[primary][slot] = x;
+            return true;
+        }
+        let pure_only = self.algorithm == "bfs-priority-evict";
+        let victim = (0..8)
+            .filter(|&s| {
+                let y = self.bins[primary][s];
+                self.first(y, primary) && (!pure_only || !self.revealed[y as usize])
+            })
+            .max_by_key(|&s| self.bins[primary][s]);
+        if let Some(slot) = victim {
+            let y = std::mem::replace(&mut self.bins[primary][slot], x);
+            // Search h2 first, even if the incoming key's h2 had free space.
+            // A failed search leaves the table unchanged; restoring both roots
+            // retains the exhaustive augmenting-path feasibility guarantee.
+            self.bfs_search(y, true) || self.bfs_search(y, false)
+        } else {
+            self.bfs(x)
+        }
+    }
+
     fn insert(&mut self, mut x: u64) -> bool {
+        if self.algorithm.starts_with("bfs-priority") {
+            return self.insert_priority_evict(x);
+        }
         if ["oracle", "oracle-shuffled", "bfs-large", "bfs-forced"]
             .contains(&self.algorithm.as_str())
         {
@@ -269,8 +320,9 @@ impl Experiment {
     }
     fn run(&mut self) {
         let mut inserted = 0;
-        let high_priority =
-            ["bfs-large", "oracle-shuffled", "bfs-forced"].contains(&self.algorithm.as_str());
+        let high_priority = ["bfs-large", "oracle-shuffled", "bfs-forced"]
+            .contains(&self.algorithm.as_str())
+            || self.algorithm.starts_with("bfs-priority");
         let mut insertion_order: Vec<_> = (1..=self.n as u64).collect();
         if high_priority {
             let mut shuffle_rng = mix(self.seed ^ 0xd1b54a32d192ed03);
@@ -415,6 +467,8 @@ fn main() {
             "oracle-shuffled",
             "bfs-large",
             "bfs-forced",
+            "bfs-priority-evict",
+            "bfs-priority-evict-all",
             "section3",
             "section4",
             "section5"

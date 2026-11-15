@@ -150,3 +150,33 @@ placement labels in ten equal key ranges. Counts sum exactly to the number
 of secondary keys in `placement-priority-bfs.csv`. The top decile is only
 26.057% secondary, versus 11.692% in the bottom decile: there is a bias, but
 primary remains the better prediction for both ranges.
+
+## Priority eviction before the incoming secondary
+
+```
+just placement priority-evict-bfs
+python3 experiments/report_priority_bfs.py > experiments/priority-bfs-report.md
+```
+
+This closer paper-inspired hybrid changes the initial insertion decision.
+When h1 is full, put the incoming key into h1 by evicting its largest eligible
+primary resident before inspecting the incoming h2. Use BFS from the victim's
+h2 to find space. If this fails, retry exhaustive BFS from both victim choices,
+retaining the feasibility guarantee. If there is no eligible primary resident,
+use ordinary two-root BFS for the incoming key.
+
+`bfs-priority-evict` only initially evicts pure primary keys (never previously
+placed secondary). `bfs-priority-evict-all` allows every primary resident. BFS
+relocations record keys' secondary visits. Both retain the previous key-ordered
+BFS neighbor policy. Internal BFS generations, rather than unmatched key IDs,
+mark visited bins because the same victim can initiate multiple searches.
+This generation change was checked against archived ordinary, soft-priority,
+and hard-forcing placements; their counts and histograms remain identical.
+
+All 12 constructions (1M keys, three seeds, 90%/95% load) succeed and pass the
+shared placement and exact-threshold checks. At 90%, the pure variant improves
+81.8418% primary-first accuracy to 81.9442%; at 95%, it improves 75.2281% to
+77.2703%. The all-primary variant is effectively identical. This demonstrates
+stronger priority/location correlation, but accuracy remains below ordinary
+BFS's 87.0286%/83.2229% at those loads. These are placement experiments, with
+no construction or query timings.

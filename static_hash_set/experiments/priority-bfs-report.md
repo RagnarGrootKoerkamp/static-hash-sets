@@ -65,3 +65,16 @@ Forcing does not improve accuracy here. The optimum usually follows the forcing 
 
 Priority biases placement, but even the largest decile is predominantly primary. Flipping an upper tail only helps when more than half of its distinct-choice keys are secondary.
 
+## Priority eviction before accepting the incoming secondary
+
+A full primary bucket first accepts the incoming key by evicting its largest eligible primary resident. BFS searches from the victim's secondary, with an exhaustive two-root fallback if necessary. The pure variant only selects keys never previously placed secondary; the all variant allows every primary resident.
+
+| Method | Load | Success | Primary-first | Optimal prediction | Gain (percentage points) | Optimal cutoff range |
+|---|---:|---:|---:|---:|---:|---:|
+| bfs-priority-evict | 90% | 3/3 | 81.8418% | 81.9442% | 0.1023 | 964,188–972,058 |
+| bfs-priority-evict-all | 90% | 3/3 | 81.8418% | 81.9442% | 0.1023 | 964,188–972,058 |
+| bfs-priority-evict | 95% | 3/3 | 75.2281% | 77.2703% | 2.0422 | 846,925–851,294 |
+| bfs-priority-evict-all | 95% | 3/3 | 75.2283% | 77.2705% | 2.0422 | 846,925–851,294 |
+
+Moving priority selection ahead of the incoming secondary creates a useful threshold, especially at 95% load. It also reduces the primary fraction: optimized prediction is still below ordinary BFS at these loads. This hybrid does not implement the paper's complete displacement rules or invariants.
+

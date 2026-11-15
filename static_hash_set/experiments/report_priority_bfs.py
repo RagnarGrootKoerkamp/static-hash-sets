@@ -45,3 +45,18 @@ if bands.exists():
     for r in csv.DictReader(bands.open()):
         print(f'| {r["percentile_low"]}–{r["percentile_high"]}% | {100*int(r["secondary_count"])/int(r["key_count"]):.3f}% |')
     print('\nPriority biases placement, but even the largest decile is predominantly primary. Flipping an upper tail only helps when more than half of its distinct-choice keys are secondary.\n')
+evict=root/'placement-priority-evict-bfs.csv'
+if evict.exists():
+    print('## Priority eviction before accepting the incoming secondary\n')
+    print('A full primary bucket first accepts the incoming key by evicting its largest eligible primary resident. BFS searches from the victim\'s secondary, with an exhaustive two-root fallback if necessary. The pure variant only selects keys never previously placed secondary; the all variant allows every primary resident.\n')
+    print('| Method | Load | Success | Primary-first | Optimal prediction | Gain (percentage points) | Optimal cutoff range |')
+    print('|---|---:|---:|---:|---:|---:|---:|')
+    groups=defaultdict(list)
+    for r in csv.DictReader(evict.open()):groups[(round(float(r['load']),2),r['algorithm'])].append(r)
+    for (load,alg),rs in sorted(groups.items()):
+        ok=[r for r in rs if r['status']=='ok']
+        p=mean(float(r['primary']) for r in ok)
+        accuracy=mean(float(r['optimal_prediction']) for r in ok)
+        cuts=[round(float(r['optimal_threshold'])*int(r['n'])) for r in ok]
+        print(f'| {alg} | {load:.0%} | {len(ok)}/{len(rs)} | {100*p:.4f}% | {100*accuracy:.4f}% | {100*(accuracy-p):.4f} | {min(cuts):,}–{max(cuts):,} |')
+    print('\nMoving priority selection ahead of the incoming secondary creates a useful threshold, especially at 95% load. It also reduces the primary fraction: optimized prediction is still below ordinary BFS at these loads. This hybrid does not implement the paper\'s complete displacement rules or invariants.\n')
