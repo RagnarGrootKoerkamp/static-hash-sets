@@ -125,3 +125,18 @@ At 60M keys and 95% load, negative filter passes are 0.366% for inline two-hot
 and 1.538% for quotient two-hot. The 32-bit quotient table uses memory/input
 0.8421: 10% less than quotient one-hot and 30% less than inline at that size.
 Collisions remain allowed in both v2 filters.
+
+## Complete 90% one-hot BFS curves (job 2178)
+
+The initial 90% one-hot BFS results covered only 1M and 16M keys. Filled the
+other 23 sizes for inline one-hot BFS and quotient one-hot BFS, at 90% only:
+414 rows, all three thread counts and lookup modes, 1M queries/thread, one
+quick pass, 2.551 GHz. Existing sizes and 95% results were preserved.
+
+All retained CSV series now cover the complete 25-size grid. The interactive
+plot was regenerated, and 90% one-hot BFS curves use lighter shades than 95%.
+No 98%, random-walk cuckoo, or older two-hot variants were reintroduced.
+
+`just bench-bfs-hellman` now selects only the retained one-hot BFS variants
+and writes `eval/cuckoo-bfs-current.csv`, preserving the historical random-walk
+comparison in `eval/cuckoo-bfs.csv`.
