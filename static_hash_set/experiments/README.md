@@ -97,3 +97,26 @@ very different distributions. Coincident hash choices count as primary.
 Histogram index zero includes empty bins and bins with no applicable keys.
 The report pools bin counts across seeds and includes means, p95, and observed
 maxima. Histogram sums and weighted sums are checked against bin/key totals.
+
+## Priority-ordered BFS and threshold prediction
+
+```
+just placement priority-bfs
+python3 experiments/report_priority_bfs.py > experiments/priority-bfs-report.md
+```
+
+This local-only experiment compares `oracle-shuffled` with `bfs-large` at
+90%/95% load, n=1M and three seeds. Both use the same keys 1..n and the same
+seeded Fisher-Yates insertion shuffle, avoiding correlation of key size with
+arrival time. The priority is the key itself, rather than the independent
+priority hash used by section 5. `bfs-large` orders primary-resident eviction
+edges by descending key, then secondary-resident return edges by ascending key.
+It preserves BFS depth order and explores every reachable edge, so this is
+only a tie-breaking policy among shortest augmenting paths.
+
+The new modes optimize `secondary_first = key > cutoff` exactly over all cut
+positions. `optimal_threshold` stores cutoff/n. Coincident candidate bins are
+counted as successful first probes for either prediction. The selected cutoff
+is checked against actual placements. See `priority-bfs-report.md` for results.
+The original section 5 experiment and its lower-priority prediction direction
+are unchanged.

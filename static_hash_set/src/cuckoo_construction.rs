@@ -44,7 +44,11 @@ impl Experiment {
                 h[x][side] =
                     ((mix(x as u64 ^ mix(seed + side as u64)) as u128 * m as u128) >> 64) as usize;
             }
-            priority[x] = mix(x as u64 ^ mix(seed + 2));
+            priority[x] = if algorithm == "bfs-large" || algorithm == "oracle-shuffled" {
+                x as u64
+            } else {
+                mix(x as u64 ^ mix(seed + 2))
+            };
         }
         Self {
             n,
@@ -100,7 +104,20 @@ impl Experiment {
                 self.bins[b][s] = x;
                 return true;
             }
-            for s in 0..8 {
+            let mut order = [0, 1, 2, 3, 4, 5, 6, 7];
+            if self.algorithm == "bfs-large" {
+                // Prefer sending large primary keys to secondary. If a return
+                // to primary is necessary, prefer returning a small key.
+                order.sort_unstable_by_key(|&s| {
+                    let key = self.bins[b][s];
+                    if self.first(key, b) {
+                        (0, self.n as u64 - key)
+                    } else {
+                        (1, key)
+                    }
+                });
+            }
+            for s in order {
                 let y = self.bins[b][s] as usize;
                 let dest = self.h[y][0] ^ self.h[y][1] ^ b;
                 if self.stamp[dest] != tag {
@@ -137,7 +154,7 @@ impl Experiment {
         }
     }
     fn insert(&mut self, mut x: u64) -> bool {
-        if self.algorithm == "oracle" {
+        if ["oracle", "oracle-shuffled", "bfs-large"].contains(&self.algorithm.as_str()) {
             return self.bfs(x);
         }
         let baseline = self.algorithm == "baseline";
@@ -230,8 +247,17 @@ impl Experiment {
     }
     fn run(&mut self) {
         let mut inserted = 0;
-        for x in 1..=self.n {
-            if !self.insert(x as u64) {
+        let high_priority = self.algorithm == "bfs-large" || self.algorithm == "oracle-shuffled";
+        let mut insertion_order: Vec<_> = (1..=self.n as u64).collect();
+        if high_priority {
+            let mut shuffle_rng = mix(self.seed ^ 0xd1b54a32d192ed03);
+            for i in (1..insertion_order.len()).rev() {
+                shuffle_rng = mix(shuffle_rng);
+                insertion_order.swap(i, (shuffle_rng % (i as u64 + 1)) as usize);
+            }
+        }
+        for x in insertion_order {
+            if !self.insert(x) {
                 break;
             }
             inserted += 1;
@@ -291,16 +317,47 @@ impl Experiment {
         labels.sort_unstable();
         let mut correct = primary;
         let mut best = correct;
-        let mut threshold = 0.;
-        for (p, is_primary) in labels {
-            if is_primary {
-                correct -= 1;
-            } else {
-                correct += 1;
+        let mut threshold = if high_priority { 1. } else { 0. };
+        if high_priority {
+            // Begin with all keys predicted primary (cutoff n), then sweep
+            // descending keys. At key x, cutoff x-1 flips exactly that key.
+            let mut cutoff = self.n as u64;
+            for &(key, is_primary) in labels.iter().rev() {
+                if self.h[key as usize][0] != self.h[key as usize][1] {
+                    if is_primary {
+                        correct -= 1;
+                    } else {
+                        correct += 1;
+                    }
+                }
+                if correct > best {
+                    best = correct;
+                    cutoff = key - 1;
+                }
             }
-            if correct > best {
-                best = correct;
-                threshold = p as f64 / 18446744073709551616.;
+            threshold = cutoff as f64 / self.n as f64;
+            let verified = labels
+                .iter()
+                .filter(|&&(key, is_primary)| {
+                    self.h[key as usize][0] == self.h[key as usize][1]
+                        || (key <= cutoff) == is_primary
+                })
+                .count();
+            assert_eq!(
+                verified, best,
+                "threshold prediction count must match sweep"
+            );
+        } else {
+            for &(p, is_primary) in &labels {
+                if is_primary {
+                    correct -= 1;
+                } else {
+                    correct += 1;
+                }
+                if correct > best {
+                    best = correct;
+                    threshold = p as f64 / 18446744073709551616.;
+                }
             }
         }
         println!(
@@ -321,7 +378,16 @@ fn main() {
     let switch_at = arg(6, "1.4").parse().unwrap();
     assert!(n > 0 && alpha > 0. && alpha <= 1.);
     assert!(
-        ["baseline", "oracle", "section3", "section4", "section5"].contains(&algorithm.as_str())
+        [
+            "baseline",
+            "oracle",
+            "oracle-shuffled",
+            "bfs-large",
+            "section3",
+            "section4",
+            "section5"
+        ]
+        .contains(&algorithm.as_str())
     );
     println!(
         "algorithm,n,seed,bins,load,budget,switch,status,inserted,primary,optimal_prediction,optimal_threshold,bumped_from_hist,secondary_in_hist"
