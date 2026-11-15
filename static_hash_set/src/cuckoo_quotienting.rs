@@ -774,20 +774,24 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         bin1: usize,
         entry: u64,
     ) -> bool {
+        if !self.table[bin1].might_spill(hash) {
+            return entry != 0
+                && self
+                    .table[bin1]
+                    .contains_bytes(entry, self.entry_bits, &self.byte_masks);
+        }
+
+        let secondary_product = (Self::permute(key, true) as u128) * self.num_bins as u128;
+        let bin2 = (secondary_product >> 64) as usize;
+        let secondary_entry = (((secondary_product as u64) >> (65 - self.entry_bits)) << 1) | 1;
         let primary_match = entry != 0
             && self
                 .table[bin1]
                 .contains_bytes(entry, self.entry_bits, &self.byte_masks);
-        if self.table[bin1].might_spill(hash) {
-            let secondary_product = (Self::permute(key, true) as u128) * self.num_bins as u128;
-            let bin2 = (secondary_product >> 64) as usize;
-            let secondary_entry = (((secondary_product as u64) >> (65 - self.entry_bits)) << 1) | 1;
-            return primary_match
-                | self
-                    .table[bin2]
-                    .contains_bytes(secondary_entry, self.entry_bits, &self.byte_masks);
-        }
         primary_match
+            | self
+                .table[bin2]
+                .contains_bytes(secondary_entry, self.entry_bits, &self.byte_masks)
     }
 
     #[inline(always)]

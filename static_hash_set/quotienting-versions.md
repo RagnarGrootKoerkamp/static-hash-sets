@@ -37,3 +37,9 @@ bucket.
   otherwise lookup uses the scalar fallback. Hellman was within about 2% of
   v9 across modes and thread counts, so this change alone did not materially
   improve lookup speed.
+- **v11:** Checks the primary bucket's 1-hot spill bit before running the
+  primary byte-SIMD match. When spill is possible, computes the secondary hash
+  and entry before checking either bucket, allowing that work to overlap with
+  the primary SIMD match. On Hellman, prefetch2 improved 5–6% at 1 and 16
+  threads and about 1% at 192 threads versus v10. Other modes stayed within
+  about 2% of v10.
