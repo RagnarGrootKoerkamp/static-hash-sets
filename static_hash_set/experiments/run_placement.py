@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Local placement sweeps; results include every seed, including failures."""
+import csv, subprocess, io, argparse
+from pathlib import Path
+p=argparse.ArgumentParser();p.add_argument('--n',type=int,default=1000000);p.add_argument('--seeds',default='1,2,3');p.add_argument('--output',default='experiments/placement-results.csv');p.add_argument('--phase',choices=['baseline','paper','parameters'],default='baseline');args=p.parse_args()
+subprocess.run(['rustc','-O','--edition=2024','src/cuckoo_construction.rs','-o','/tmp/cuckoo-construction'],check=True)
+loads=[.5,.7,.8,.9,.95,.97,.98,.99,.995,.997,.998,.999]
+configs=[(a,1000000,1.4) for a in (['baseline','oracle'] if args.phase=='baseline' else ['section3','section4','section5'])]
+if args.phase=='parameters':
+ loads=[.95,.99,.995,.997]
+ configs=[(a,b,s) for a in ['section4','section5'] for b in [1000,100000] for s in [0,1.2,1.4,1.6]]
+with open(args.output,'w',newline='') as f:
+ writer=None
+ for seed in map(int,args.seeds.split(',')):
+  for load in loads:
+   for alg,budget,switch in configs:
+    out=subprocess.run(['/tmp/cuckoo-construction',str(args.n),alg,str(load),str(seed),str(budget),str(switch)],capture_output=True,text=True,check=True).stdout
+    row=next(csv.DictReader(io.StringIO(out)))
+    if writer is None:writer=csv.DictWriter(f,fieldnames=row.keys());writer.writeheader()
+    writer.writerow(row);f.flush()
+    print(alg,seed,load,row['status'],row['primary'],row['optimal_prediction'],flush=True)

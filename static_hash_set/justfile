@@ -53,3 +53,7 @@ plot:
 bench_one:
     cargo build -r --bin static_hash_set --no-default-features
     samply record ../target/release/static_hash_set --queries-per-thread 10000000 --ns 60000000 --threads 1 --only inline-onehot-cuckoo-lazy
+
+# LLM-reusable local placement experiments (no time measurements).
+placement phase="baseline" seeds="1,2,3" n="1000000":
+    python3 experiments/run_placement.py --phase {{phase}} --seeds {{seeds}} --n {{n}} --output experiments/placement-{{phase}}.csv
