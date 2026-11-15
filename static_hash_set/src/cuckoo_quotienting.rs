@@ -20,6 +20,9 @@
 //!
 //! NOTE: THIS FILE IS AI SLOP!!!
 
+#[path = "cuckoo_bfs.rs"]
+mod bfs;
+
 pub use crate::cuckoo::Mode;
 use crate::{T, traits::HashSet};
 
@@ -504,7 +507,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
         let mut this = Self::with_capacity(slot_ratio, keys.len());
         if BFS {
             assert!(!EF, "BFS construction requires unsorted buckets");
-            let mut workspace = crate::cuckoo::BfsConstruction::new(this.num_bins);
+            let mut workspace = bfs::BfsConstruction::new(this.num_bins);
             for &key in keys {
                 this.insert_bfs(key, &mut workspace);
             }
@@ -921,7 +924,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
         }
     }
 
-    fn insert_bfs(&mut self, key: T, workspace: &mut crate::cuckoo::BfsConstruction) {
+    fn insert_bfs(&mut self, key: T, workspace: &mut bfs::BfsConstruction) {
         assert_ne!(key, 0, "zero keys are not supported");
         if self.contains_eager(key) {
             return;

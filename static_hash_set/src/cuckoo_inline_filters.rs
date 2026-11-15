@@ -5,6 +5,9 @@
 //! we may need to do longer probe sequences (each probe is 8 bytes, not 1 byte), but on the other hand we only take
 //! 1 cache miss per access, not 2.
 
+#[path = "cuckoo_bfs.rs"]
+mod bfs;
+
 use std::hash::{BuildHasher, BuildHasherDefault};
 
 const BIN_SIZE: usize = 7;
@@ -80,7 +83,7 @@ impl<const MODE: u8, const ONE_HOT: bool, const BRANCHLESS_SECONDARY: bool, cons
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
         if BFS {
-            let mut workspace = crate::cuckoo::BfsConstruction::new(this.num_bins);
+            let mut workspace = bfs::BfsConstruction::new(this.num_bins);
             for &key in keys {
                 this.insert_bfs(key, &mut workspace);
             }
@@ -446,7 +449,7 @@ impl<const MODE: u8, const ONE_HOT: bool, const BRANCHLESS_SECONDARY: bool, cons
         self.insert_to_bin(key, self.bin_idx_1(key));
     }
 
-    fn insert_bfs(&mut self, key: T, workspace: &mut crate::cuckoo::BfsConstruction) {
+    fn insert_bfs(&mut self, key: T, workspace: &mut bfs::BfsConstruction) {
         if self.contains_eager(key) {
             return;
         }
