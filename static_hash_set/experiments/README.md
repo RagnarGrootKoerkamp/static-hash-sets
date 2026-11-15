@@ -6,6 +6,7 @@ Run locally from `static_hash_set`:
 just placement baseline
 just placement paper
 just placement parameters
+just placement threshold
 python3 experiments/report_placement.py > experiments/placement-report.md
 ```
 
@@ -48,3 +49,31 @@ computed from the 9-core orientability criterion. With Q_k(x) the Poisson(x)
 upper tail Pr[X >= k], solve x Q_8(x)/Q_9(x) = 16, then
 alpha = x/(16 Q_8(x)) = 0.997853282996. This is a random-instance limit, not a
 universal upper bound for every finite table. Absolute capacity permits 100%.
+
+## Results for n = 1,000,000
+
+See `placement-report.md` for all rows and the CSV files for individual seeds.
+The baseline reaches 99.77% in all three sampled graphs. At 99.78%, baseline
+succeeds in 1/3 and the exact oracle in 2/3. At 99.79%, both succeed in 1/3;
+at 99.8%, neither succeeds. Changing bin count changes range reduction and hence
+the graph, so a fixed seed does not define nested graphs across target loads.
+
+With the paper's 1.4 switch, sections 3, 4 and 5 reach respectively 98%, 99%,
+and 99.5% on all three seeds in the coarse sweep. Starting look-ahead immediately
+raises section 5 to 99.7% for all three seeds and greatly improves the primary
+fraction. At 99% it keeps 71.13% primary and predicts 74.16% correctly, versus
+56.09% primary for baseline. At 95% it keeps 82.61% primary, versus baseline's
+74.00%. These are empirical results for capacity eight; the paper's guarantees
+assume sufficiently large capacity and do not promise identical behavior here.
+
+The section 5 priority predictor is useful mainly at high load. Using the default
+switch, its optimized accuracy is about 75.15% at 95% load and 72.40% at 99%.
+Starting look-ahead immediately improves the 99% accuracy to 74.16%. Thresholds
+are optimized separately for each completed table; full threshold results are
+in the report. No timings are measured.
+
+Increasing the per-insertion kick limit from 1,000 to 100,000 changes two tested
+runs from failure to success: immediate-look-ahead section 4 at 99.5% (seed 2),
+and immediate-look-ahead section 5 at 99.7% (seed 1). Other parameter runs are
+unchanged. The switch is evaluated at insertion boundaries; once the revealed
+hash count crosses it, subsequent insertions use look-ahead throughout.

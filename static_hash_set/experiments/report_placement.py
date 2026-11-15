@@ -13,12 +13,12 @@ for _ in range(100):
 x=(lo+hi)/2
 print(f'Asymptotic random two-choice, 8-slot threshold: {x/(16*tail(8,x)):.10%}.')
 print('Solves x*Pr[Poisson(x)>=8] / Pr[Poisson(x)>=9] = 16; alpha=x/(16*Pr[Poisson(x)>=8]).')
-for phase in ['baseline','paper','parameters']:
+for phase in ['baseline','paper','parameters','threshold']:
  path=Path(f'experiments/placement-{phase}.csv')
  if not path.exists():continue
  groups=defaultdict(list)
  for row in csv.DictReader(path.open()):
-  groups[(row['algorithm'],round(float(row['load']),3),row['budget'],row['switch'])].append(row)
+  groups[(row['algorithm'],round(float(row['load']),4),row['budget'],row['switch'])].append(row)
  print(f'\n{phase}\n')
  print('| Algorithm | Load % | Budget | Switch | Success | Primary % | Best prediction % | Threshold |')
  print('|---|---:|---:|---:|---:|---:|---:|---:|')
