@@ -31,29 +31,37 @@ const SECONDARY_SEED: u64 = 0x9e3779b97f4a7c15;
 const MIX_MULTIPLIER: u64 = 0xbf58476d1ce4e5b9;
 const MIX_INVERSE: u64 = 0x96de1b173f119089;
 
+const fn byte_shuffle_mask<const W: usize>() -> [i8; 64] {
+    let mut indexes = [0i8; 64];
+    let mut i = 0;
+    while i < 64 {
+        indexes[i] = (i % W) as i8;
+        i += 1;
+    }
+    indexes
+}
+
+const fn byte_start_mask<const W: usize>() -> u64 {
+    let mut mask = 0;
+    let mut slot = 0;
+    while slot < 56 / W {
+        mask |= 1u64 << (slot * W);
+        slot += 1;
+    }
+    mask
+}
+
 /// One 64-byte bucket. With P = 0, entries are stored consecutively. Otherwise
 /// the first `slots * P` bits hold slot prefixes, followed by their packed
 /// suffixes in slot order. Elias–Fano stores only each entry's low bits in
 /// that layout and appends a unary bitmap for high bits and occupancy. SIMD
-/// compares prefixes before the full quotient is checked. With a 32-bit prefix
-/// and a spill filter, suffixes use byte-aligned lanes: 16 bits for quotients up
-/// to 48 bits, and 24 bits for quotients up to 56 bits. The non-EF 48-bit layout
-/// has eight entries, so both vectors can be checked without a ninth-slot path.
+/// compares prefixes before the full quotient is checked. Non-EF 32-bit-prefix
+/// buckets with a spill filter store byte-aligned entries before the summary.
 #[derive(Clone)]
 #[repr(align(64))]
 struct PackedBin<const P: usize, const FILTER: bool = false>([u64; 8]);
 
 impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
-    #[inline(always)]
-    fn contains_eight_48(&self, value: u64) -> bool {
-        let prefixes = unsafe { self.0.as_ptr().cast::<[u32; 8]>().read_unaligned() };
-        let suffixes = unsafe { self.0.as_ptr().add(4).cast::<[u16; 8]>().read_unaligned() };
-        let prefixes = wide::u32x8::from(prefixes).simd_eq(wide::u32x8::splat(value as u32));
-        let suffixes = wide::u32x8::from(wide::u16x8::from(suffixes))
-            .simd_eq(wide::u32x8::splat((value >> 32) as u32));
-        (prefixes & suffixes).to_bitmask() != 0
-    }
-
     fn storage_bits(bits: usize) -> usize {
         if FILTER && P == 32 && bits <= 56 {
             if bits <= 48 {
@@ -69,6 +77,80 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     #[inline(always)]
     fn might_spill(&self, hash: u64) -> bool {
         self.0[7] & (1u64 << (hash & 63)) != 0
+    }
+
+    #[inline(always)]
+    fn get_bytes(&self, slot: usize, bits: usize) -> u64 {
+        let bytes = bits.div_ceil(8);
+        self.read(slot * bytes * 8, bits)
+    }
+
+    #[inline(always)]
+    fn set_bytes(&mut self, slot: usize, bits: usize, value: u64) {
+        let bytes = bits.div_ceil(8);
+        self.write(slot * bytes * 8, bytes * 8, value);
+    }
+
+    #[inline(always)]
+    fn contains_bytes<const W: usize>(&self, value: u64, bits: usize) -> bool {
+        debug_assert_eq!(W, bits.div_ceil(8));
+        #[cfg(target_arch = "x86_64")]
+        if std::arch::is_x86_feature_detected!("avx512f")
+            && std::arch::is_x86_feature_detected!("avx512bw")
+        {
+            return unsafe { self.contains_bytes_avx512::<W>(value) };
+        }
+        let slots = 56 / W;
+        (0..slots).any(|slot| self.get_bytes(slot, bits) == value)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx512f,avx512bw")]
+    unsafe fn contains_bytes_avx512<const W: usize>(&self, value: u64) -> bool {
+        use std::arch::x86_64::*;
+        let repeated_value = _mm512_set1_epi64(value as i64);
+        let indexes = byte_shuffle_mask::<W>();
+        let shuffle = unsafe { _mm512_loadu_si512(indexes.as_ptr().cast()) };
+        let target = _mm512_shuffle_epi8(repeated_value, shuffle);
+        let data = unsafe { _mm512_loadu_si512(self.0.as_ptr().cast()) };
+        let equal = _mm512_cmpeq_epi8_mask(data, target) as u64;
+        let all_bytes_equal = match W {
+            1 => equal,
+            2 => {
+                let run2 = equal & (equal >> 1);
+                run2
+            }
+            3 => {
+                let run2 = equal & (equal >> 1);
+                run2 & (run2 >> 1)
+            }
+            4 => {
+                let run2 = equal & (equal >> 1);
+                run2 & (run2 >> 2)
+            }
+            5 => {
+                let run2 = equal & (equal >> 1);
+                let run4 = run2 & (run2 >> 2);
+                run4 & (run4 >> 1)
+            }
+            6 => {
+                let run2 = equal & (equal >> 1);
+                let run4 = run2 & (run2 >> 2);
+                run4 & (run4 >> 2)
+            }
+            7 => {
+                let run2 = equal & (equal >> 1);
+                let run4 = run2 & (run2 >> 2);
+                run4 & (run4 >> 3)
+            }
+            8 => {
+                let run2 = equal & (equal >> 1);
+                let run4 = run2 & (run2 >> 2);
+                run4 & (run4 >> 4)
+            }
+            _ => unreachable!("encoded entry exceeds 64 bits"),
+        };
+        (all_bytes_equal & byte_start_mask::<W>()) != 0
     }
 
     #[inline(always)]
@@ -454,8 +536,9 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
 
     fn bin_layout(entry_bits: usize) -> (usize, usize) {
         if !EF {
-            if FILTER && PREFIX == 32 && entry_bits <= 48 {
-                return (8, entry_bits);
+            if FILTER && PREFIX == 32 {
+                let entry_bytes = entry_bits.div_ceil(8);
+                return (56 / entry_bytes, entry_bits);
             }
             return (
                 (512 - 64 * FILTER as usize)
@@ -555,12 +638,93 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
     #[inline(always)]
     fn matches(&self, idx: usize, key: T, secondary: bool) -> bool {
         key != 0
-            && self.table[idx].contains_encoded::<EF>(
-                self.entry(key, secondary),
+            && self.contains_entry(idx, self.entry(key, secondary))
+    }
+
+    #[inline(always)]
+    fn byte_layout(&self) -> bool {
+        FILTER && PREFIX == 32 && !EF
+    }
+
+    #[inline(always)]
+    fn get_entry(&self, idx: usize, slot: usize) -> u64 {
+        if self.byte_layout() {
+            self.table[idx].get_bytes(slot, self.entry_bits)
+        } else {
+            self.table[idx].get_encoded::<EF>(
+                slot,
                 self.entry_bits,
                 self.slots,
                 self.low_bits,
             )
+        }
+    }
+
+    #[inline(always)]
+    fn set_entry(&mut self, idx: usize, slot: usize, value: u64) {
+        if self.byte_layout() {
+            self.table[idx].set_bytes(slot, self.entry_bits, value);
+        } else {
+            self.table[idx].set_encoded::<EF>(
+                slot,
+                self.entry_bits,
+                self.slots,
+                self.low_bits,
+                value,
+            );
+        }
+    }
+
+    #[inline(always)]
+    fn full_entry(&self, idx: usize) -> bool {
+        if self.byte_layout() {
+            self.table[idx].get_bytes(self.slots - 1, self.entry_bits) != 0
+        } else {
+            self.table[idx].full_encoded::<EF>(self.entry_bits, self.slots, self.low_bits)
+        }
+    }
+
+    #[inline(always)]
+    fn push_entry(&mut self, idx: usize, value: u64) {
+        if self.byte_layout() {
+            let slot = (0..self.slots)
+                .find(|&slot| self.table[idx].get_bytes(slot, self.entry_bits) == 0)
+                .expect("full bucket");
+            self.table[idx].set_bytes(slot, self.entry_bits, value);
+        } else {
+            self.table[idx].push_encoded::<EF>(
+                value,
+                self.entry_bits,
+                self.slots,
+                self.low_bits,
+            );
+        }
+    }
+
+    #[inline(always)]
+    fn contains_entry(&self, idx: usize, value: u64) -> bool {
+        if value == 0 {
+            return false;
+        }
+        if !self.byte_layout() {
+            return self.table[idx].contains_encoded::<EF>(
+                value,
+                self.entry_bits,
+                self.slots,
+                self.low_bits,
+            );
+        }
+        match self.entry_bits.div_ceil(8) {
+            1 => self.table[idx].contains_bytes::<1>(value, self.entry_bits),
+            2 => self.table[idx].contains_bytes::<2>(value, self.entry_bits),
+            3 => self.table[idx].contains_bytes::<3>(value, self.entry_bits),
+            4 => self.table[idx].contains_bytes::<4>(value, self.entry_bits),
+            5 => self.table[idx].contains_bytes::<5>(value, self.entry_bits),
+            6 => self.table[idx].contains_bytes::<6>(value, self.entry_bits),
+            7 => self.table[idx].contains_bytes::<7>(value, self.entry_bits),
+            8 => self.table[idx].contains_bytes::<8>(value, self.entry_bits),
+            _ => unreachable!("encoded entry exceeds 64 bits"),
+        }
     }
 
     fn rebuild_spill(&mut self) {
@@ -569,12 +733,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         }
         for idx in 0..self.num_bins {
             for slot in 0..self.slots {
-                let entry = self.table[idx].get_encoded::<EF>(
-                    slot,
-                    self.entry_bits,
-                    self.slots,
-                    self.low_bits,
-                );
+                let entry = self.get_entry(idx, slot);
                 if entry != 0 && entry & 1 != 0 {
                     let key = self.decode(entry, idx);
                     let hash = Self::permute(key, false);
@@ -632,49 +791,39 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         }
     }
 
-    #[inline(never)]
-    fn count_loop_fixed_48(&self, keys: &[T]) -> usize {
-        let mut chunks = keys.chunks_exact(4);
-        let mut first_count = 0;
-        let mut second_count = 0;
-        for keys in &mut chunks {
-            first_count +=
-                self.contains_lazy_fixed_48(keys[0], Self::permute(keys[0], false)) as usize;
-            second_count +=
-                self.contains_lazy_fixed_48(keys[1], Self::permute(keys[1], false)) as usize;
-            first_count +=
-                self.contains_lazy_fixed_48(keys[2], Self::permute(keys[2], false)) as usize;
-            second_count +=
-                self.contains_lazy_fixed_48(keys[3], Self::permute(keys[3], false)) as usize;
-        }
-        for &key in chunks.remainder() {
-            first_count += self.contains_lazy_fixed_48(key, Self::permute(key, false)) as usize;
-        }
-        std::hint::black_box(first_count + second_count)
-    }
-
     #[inline(always)]
-    fn has_fixed_48_layout(&self) -> bool {
-        FILTER && !EF && PREFIX == 32 && self.entry_bits <= 48
-    }
-
-    #[inline(always)]
-    fn contains_lazy_fixed_48(&self, key: T, hash: u64) -> bool {
-        if key == 0 {
-            return false;
-        }
-        let product = (hash as u128) * self.num_bins as u128;
-        let entry = ((product as u64) >> (65 - self.entry_bits)) << 1;
-        let primary = unsafe { self.table.get_unchecked((product >> 64) as usize) };
-        let primary_match = primary.contains_eight_48(entry) & (entry != 0);
-        // The summary includes keys whose primary encoding is zero as well.
-        if primary.might_spill(hash) {
+    fn contains_lazy_byte_width<const W: usize>(
+        &self,
+        key: T,
+        hash: u64,
+        bin1: usize,
+        entry: u64,
+    ) -> bool {
+        let primary_match = entry != 0
+            && self.table[bin1].contains_bytes::<W>(entry, self.entry_bits);
+        if self.table[bin1].might_spill(hash) {
             let secondary_product = (Self::permute(key, true) as u128) * self.num_bins as u128;
-            let secondary = unsafe { self.table.get_unchecked((secondary_product >> 64) as usize) };
+            let bin2 = (secondary_product >> 64) as usize;
             let secondary_entry = (((secondary_product as u64) >> (65 - self.entry_bits)) << 1) | 1;
-            return primary_match | secondary.contains_eight_48(secondary_entry);
+            return primary_match
+                | self.table[bin2].contains_bytes::<W>(secondary_entry, self.entry_bits);
         }
         primary_match
+    }
+
+    #[inline(always)]
+    fn contains_lazy_byte_layout(&self, key: T, hash: u64, bin1: usize, entry: u64) -> bool {
+        match self.entry_bits.div_ceil(8) {
+            1 => self.contains_lazy_byte_width::<1>(key, hash, bin1, entry),
+            2 => self.contains_lazy_byte_width::<2>(key, hash, bin1, entry),
+            3 => self.contains_lazy_byte_width::<3>(key, hash, bin1, entry),
+            4 => self.contains_lazy_byte_width::<4>(key, hash, bin1, entry),
+            5 => self.contains_lazy_byte_width::<5>(key, hash, bin1, entry),
+            6 => self.contains_lazy_byte_width::<6>(key, hash, bin1, entry),
+            7 => self.contains_lazy_byte_width::<7>(key, hash, bin1, entry),
+            8 => self.contains_lazy_byte_width::<8>(key, hash, bin1, entry),
+            _ => unreachable!("encoded entry exceeds 64 bits"),
+        }
     }
 
     #[inline(always)]
@@ -686,8 +835,8 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         let product = (hash as u128) * self.num_bins as u128;
         let bin1 = (product >> 64) as usize;
         let entry = ((product as u64) >> (65 - self.entry_bits)) << 1;
-        if self.has_fixed_48_layout() {
-            return self.contains_lazy_fixed_48(key, hash);
+        if self.byte_layout() {
+            return self.contains_lazy_byte_layout(key, hash, bin1, entry);
         }
         // A zero primary encoding is always stored in its secondary bucket.
         if entry == 0 {
@@ -709,7 +858,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         if primary_match {
             return true;
         }
-        if !self.table[bin1].full_encoded::<EF>(self.entry_bits, self.slots, self.low_bits) {
+        if !self.full_entry(bin1) {
             return false;
         }
         self.matches(self.bin_idx_2(key), key, true)
@@ -750,13 +899,8 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
             if entry == 0 {
                 continue;
             }
-            if !self.table[idx].full_encoded::<EF>(self.entry_bits, self.slots, self.low_bits) {
-                self.table[idx].push_encoded::<EF>(
-                    entry,
-                    self.entry_bits,
-                    self.slots,
-                    self.low_bits,
-                );
+            if !self.full_entry(idx) {
+                self.push_entry(idx, entry);
                 self.len += 1;
                 return;
             }
@@ -776,35 +920,23 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
                 secondary = true;
                 continue;
             }
-            if !self.table[idx].full_encoded::<EF>(self.entry_bits, self.slots, self.low_bits) {
-                self.table[idx].push_encoded::<EF>(
-                    entry,
-                    self.entry_bits,
-                    self.slots,
-                    self.low_bits,
-                );
+            if !self.full_entry(idx) {
+                self.push_entry(idx, entry);
                 self.len += 1;
                 return;
             }
             let slot = rand::random_range(0..self.slots);
-            let displaced =
-                self.table[idx].get_encoded::<EF>(slot, self.entry_bits, self.slots, self.low_bits);
-            self.table[idx].set_encoded::<EF>(
-                slot,
-                self.entry_bits,
-                self.slots,
-                self.low_bits,
-                entry,
-            );
+            let displaced = self.get_entry(idx, slot);
+            self.set_entry(idx, slot, entry);
             key = self.decode(displaced, idx);
             secondary = displaced & 1 == 0;
         }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
-        self.table.iter().enumerate().flat_map(move |(idx, bin)| {
+        self.table.iter().enumerate().flat_map(move |(idx, _)| {
             (0..self.slots).filter_map(move |slot| {
-                let entry = bin.get_encoded::<EF>(slot, self.entry_bits, self.slots, self.low_bits);
+                let entry = self.get_entry(idx, slot);
                 (entry != 0).then(|| self.decode(entry, idx))
             })
         })
@@ -820,40 +952,6 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
 impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool> HashSet
     for CuckooSet<MODE, PREFIX, EF, FILTER>
 {
-    fn count_loop(&self, keys: &[T]) -> usize {
-        if Mode::from(MODE) == Mode::Lazy && self.has_fixed_48_layout() {
-            return self.count_loop_fixed_48(keys);
-        }
-        let count = keys.iter().filter(|&&key| self.contains(key)).count();
-        std::hint::black_box(count)
-    }
-
-    fn count_prefetch2(&self, keys: &[T]) -> usize {
-        if keys.len() < 32 {
-            return self.count_loop(keys);
-        }
-        let mut tokens: [usize; 32] = std::array::from_fn(|i| self.prefetch(keys[i]));
-        let mut count = 0;
-        if Mode::from(MODE) == Mode::Lazy && self.has_fixed_48_layout() {
-            for i in 0..keys.len() - 32 {
-                count += self.contains_lazy_fixed_48(keys[i], tokens[i % 32] as u64) as usize;
-                tokens[i % 32] = self.prefetch_first(keys[i + 32]);
-            }
-            for i in keys.len() - 32..keys.len() {
-                count += self.contains_lazy_fixed_48(keys[i], tokens[i % 32] as u64) as usize;
-            }
-        } else {
-            for i in 0..keys.len() - 32 {
-                count += self.contains_with_token(keys[i], tokens[i % 32]) as usize;
-                tokens[i % 32] = self.prefetch(keys[i + 32]);
-            }
-            for i in keys.len() - 32..keys.len() {
-                count += self.contains_with_token(keys[i], tokens[i % 32]) as usize;
-            }
-        }
-        std::hint::black_box(count)
-    }
-
     fn name(&self) -> &'static str {
         if FILTER {
             return match (Mode::from(MODE), PREFIX, EF) {
@@ -918,9 +1016,9 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool> Ha
     fn primary_hit_ratio(&self) -> Option<f32> {
         let mut total = 0usize;
         let mut primary = 0usize;
-        for bin in &self.table {
+        for (idx, _) in self.table.iter().enumerate() {
             for slot in 0..self.slots {
-                let entry = bin.get_encoded::<EF>(slot, self.entry_bits, self.slots, self.low_bits);
+                let entry = self.get_entry(idx, slot);
                 if entry != 0 {
                     total += 1;
                     primary += (entry & 1 == 0) as usize;

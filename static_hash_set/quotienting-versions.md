@@ -1,0 +1,21 @@
+# Quotienting cuckoo filter versions
+
+Short notes on the lazy 32-bit-prefix quotient table with its one-hot spill
+filter. The spill summary remains in the final 64-bit word of each 64-byte
+bucket.
+
+- **v2:** Nine-slot layout with 16-bit suffix lanes when the encoded entry
+  fits. The ninth slot needed extra scalar handling.
+- **v3:** Kept nine slots and added byte-aligned 24-bit suffixes for entries
+  up to 56 bits, avoiding a second SIMD load for the ninth prefix.
+- **v4:** Fixed the non-EF layout at eight slots for entries up to 48 bits.
+  Compared eight 32-bit prefixes and eight 16-bit suffixes together, removing
+  the ninth-slot path.
+- **v5:** Rounded each entry width up to whole bytes and packed as many as fit
+  in the 56 data bytes before the summary. Used AVX512BW byte shuffle and
+  compare, followed by a linear bit-mask reduction. It saved memory but was
+  slower than v4 in the Hellman run.
+- **v6:** Keeps v5's layout and AVX512BW compare. Reduces equal-byte runs by
+  combining masks for runs of 2, 4, and 8, then overlaps those masks for the
+  selected entry width. This replaces the linear chain of up to seven ANDs
+  with at most three dependent ANDs. Hellman results are pending.

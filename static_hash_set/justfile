@@ -15,6 +15,14 @@ bench-hellman:
     scp ae-new:{{remote_repo}}/eval/latest-hellman.csv eval/latest-hellman.csv
     cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
 
+# Run one method on Hellman, replace that method's rows in the combined CSV,
+# and refresh the plot. An optional label suffix keeps separate revisions apart.
+bench-one-hellman method label="":
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.one-hellman-{{method}}-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; srun --cpu-freq=2551000:UserSpace cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,192 --only {{method}} --quick --queries-per-thread 1000000 > eval/one-hellman-{{method}}.csv"'
+    scp ae-new:{{remote_repo}}/eval/one-hellman-{{method}}.csv eval/one-hellman-{{method}}.csv
+    python3 scripts/merge_bench.py eval/latest-hellman.csv eval/one-hellman-{{method}}.csv "{{label}}"
+    cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
+
 bench-floyd:
     ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=floyd --nodes=1 --ntasks=1 --cpus-per-task=128 --exclusive --mem=0 --time=02:00:00 --output=eval/.latest-floyd-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-floyd; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,128 --only {{variants}} --quick --queries-per-thread 1000000 > eval/latest-floyd.csv"'
     scp ae-new:{{remote_repo}}/eval/latest-floyd.csv eval/latest-floyd.csv
