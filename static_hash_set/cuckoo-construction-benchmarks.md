@@ -27,3 +27,25 @@ Validation uses `just fuzz-cuckoo 1000000`, a single shared end-to-end driver
 for all six variants: three seeds, both loads, duplicates, positive/negative
 membership, and loop/prefetch/prefetch2 counts. AVX-512 build flags must be
 passed to the binary, not globally to dependencies.
+
+## BFS comparison, Hellman job 2174
+
+Completed successfully. Raw data: `eval/cuckoo-bfs.csv` (1,800 rows), merged
+into `eval/latest-hellman.csv`; the interactive plot includes BFS alongside
+random walk at both loads. All six variants also passed the shared 1M-key fuzz
+check locally and with AVX-512 enabled on the server, for three seeds and both
+loads. All binaries, including standalone profiling programs, pass cargo check.
+
+Ratios below are geometric means over 25 sizes. Query columns are q50 time
+ratios (BFS/random walk, smaller is better); build is construction time ratio.
+One quick pass per configuration, with no reruns.
+
+| Table | Load | Build | Loop, 1 thread | Prefetch2, 1 thread | Loop, 192 threads | Prefetch2, 192 threads |
+|---|---:|---:|---:|---:|---:|---:|
+| Inline 1hot | 95% | 2.65 | 0.863 | 0.854 | 0.954 | 0.942 |
+| Inline 1hot | 98% | 2.30 | 0.800 | 0.788 | 0.913 | 0.894 |
+| Quotient 1hot | 95% | 3.39 | 0.923 | 0.865 | 0.973 | 0.956 |
+| Quotient 1hot | 98% | 3.36 | 0.827 | 0.790 | 0.923 | 0.909 |
+
+For a short comparison use `just bench-bfs-hellman 1000000 0.95,0.98`.
+For the new filters use `just bench-twohot-hellman 1000000 0.95,0.98`.

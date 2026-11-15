@@ -78,3 +78,6 @@ bench-twohot-hellman ns=sizes alphas="0.95,0.98":
     scp ae-new:{{remote_repo}}/eval/cuckoo-twohot.csv eval/cuckoo-twohot.csv
     python3 scripts/merge_bench.py eval/latest-hellman.csv eval/cuckoo-twohot.csv ""
     cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
+
+report-cuckoo-bfs:
+    python3 scripts/report_cuckoo_bfs.py > eval/cuckoo-bfs-report.md
