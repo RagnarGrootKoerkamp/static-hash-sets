@@ -8,13 +8,13 @@
   re-encoded for each new bucket; zero primary encodings are excluded. Spill
   summaries are rebuilt after all insertions. Query layout and logic are the
   same as the corresponding random-walk table.
-- **Inline 2hot64 BFS:** Seven full-width keys plus a 64-bit summary per bin.
+- **Inline 2hot64 BFS (v1):** Seven full-width keys plus a 64-bit summary per bin.
   Two distinct bits are derived from the existing primary hash.
-- **Quotient 2hot32 BFS:** Reserves only the final four bytes of the 64-byte bin
+- **Quotient 2hot32 BFS (v1):** Reserves only the final four bytes of the 64-byte bin
   for its two-hot summary. Whole-byte entries occupy the preceding 60 bytes:
   e.g., ten 6-byte entries instead of nine in the 64-bit-summary variant.
   Equality masks use the new slot count and filter rebuilds preserve key bytes
-  in the final u64. Both 2-hot variants select the second bit via an offset
+  in the final u64. The initial v1 variants select the second bit via an offset
   modulo (number of bits minus one), guaranteeing two distinct bits.
 
 Reproduce with `just bench-bfs-hellman` and `just bench-twohot-hellman`.
@@ -105,3 +105,23 @@ Focused 95% load, single-thread loop, 50%-positive queries, ns/query:
 
 These are separate quick runs; small timing differences should not be treated
 as statistically established improvements.
+
+### Full v2 sweep (job 2177)
+
+Completed successfully: 900 rows, 25 sizes, only the two changed two-hot
+variants, 90%/95% load, 1/16/192 threads, 1M queries/thread, one quick pass,
+2.551 GHz. No 98% configurations ran. The combined CSV and interactive plot
+include the v2 curves. Detailed results are in `cuckoo-twohot-v2-results.md`;
+regenerate with `just report-twohot-v2`.
+
+At 95% load, single-thread prefetch2 time for 50%-positive queries falls from
+16.698 to 8.345 ns/query for inline two-hot, and from 10.508 to 9.156 for
+quotient two-hot (geometric means over 25 sizes). Compared with corresponding
+one-hot BFS tables, v2 is about 4.3%/4.6% slower on this metric, versus the much
+larger overhead of v1. At 192 threads the corresponding gaps are 3.4%/2.3%.
+These are separate quick runs, so small differences remain subject to noise.
+
+At 60M keys and 95% load, negative filter passes are 0.366% for inline two-hot
+and 1.538% for quotient two-hot. The 32-bit quotient table uses memory/input
+0.8421: 10% less than quotient one-hot and 30% less than inline at that size.
+Collisions remain allowed in both v2 filters.

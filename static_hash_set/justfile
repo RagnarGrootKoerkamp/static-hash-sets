@@ -86,3 +86,6 @@ bench-twohot-v2-hellman ns="1000000,16000000" alphas="0.9,0.95" methods="inline-
     scp ae-new:{{remote_repo}}/eval/cuckoo-twohot-v2.csv eval/cuckoo-twohot-v2.csv
     python3 scripts/merge_bench.py eval/latest-hellman.csv eval/cuckoo-twohot-v2.csv "" --rename "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>" "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS> v2" --rename "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS>" "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS> v2"
     cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
+
+report-twohot-v2:
+    python3 scripts/report_twohot_v2.py > eval/cuckoo-twohot-v2-report.md
