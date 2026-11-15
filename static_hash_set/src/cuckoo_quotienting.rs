@@ -32,6 +32,10 @@ const MIX_MULTIPLIER: u64 = 0xbf58476d1ce4e5b9;
 const MIX_INVERSE: u64 = 0x96de1b173f119089;
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw")),
+    allow(dead_code)
+)]
 struct ByteMasks {
     width: usize,
     shuffle: [i8; 64],
@@ -57,6 +61,10 @@ impl ByteMasks {
 }
 
 #[inline(always)]
+#[cfg_attr(
+    not(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw")),
+    allow(dead_code)
+)]
 fn has_equal_byte_entry(equal: u64, masks: &ByteMasks) -> bool {
     let sum = equal.wrapping_add(masks.starts);
     let carry_into = sum ^ equal ^ masks.starts;
@@ -106,17 +114,16 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     #[inline(always)]
     fn contains_bytes(&self, value: u64, bits: usize, masks: &ByteMasks) -> bool {
         debug_assert_eq!(masks.width, bits.div_ceil(8));
-        #[cfg(target_arch = "x86_64")]
-        if std::arch::is_x86_feature_detected!("avx512f")
-            && std::arch::is_x86_feature_detected!("avx512bw")
-        {
-            return unsafe { self.contains_bytes_avx512(value, masks) };
-        }
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw"))]
+        return unsafe { self.contains_bytes_avx512(value, masks) };
+
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw")))]
         let slots = 56 / masks.width;
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw")))]
         (0..slots).any(|slot| self.get_bytes(slot, bits) == value)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw"))]
     #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn contains_bytes_avx512(&self, value: u64, masks: &ByteMasks) -> bool {
         use std::arch::x86_64::*;

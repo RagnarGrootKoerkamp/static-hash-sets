@@ -17,8 +17,8 @@ bench-hellman:
 
 # Run one method on Hellman, replace that method's rows in the combined CSV,
 # and refresh the plot. An optional label suffix keeps separate revisions apart.
-bench-one-hellman method label="":
-    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.one-hellman-{{method}}-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; srun --cpu-freq=2551000:UserSpace cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,192 --only {{method}} --quick --queries-per-thread 1000000 > eval/one-hellman-{{method}}.csv"'
+bench-one-hellman method label="" rustflags="":
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.one-hellman-{{method}}-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; if [ -n \"{{rustflags}}\" ]; then srun --cpu-freq=2551000:UserSpace cargo rustc --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- {{rustflags}} && srun --cpu-freq=2551000:UserSpace ../target-hellman/release/static_hash_set --ns {{sizes}} --threads 1,16,192 --only {{method}} --quick --queries-per-thread 1000000 > eval/one-hellman-{{method}}.csv; else srun --cpu-freq=2551000:UserSpace cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,192 --only {{method}} --quick --queries-per-thread 1000000 > eval/one-hellman-{{method}}.csv; fi"'
     scp ae-new:{{remote_repo}}/eval/one-hellman-{{method}}.csv eval/one-hellman-{{method}}.csv
     python3 scripts/merge_bench.py eval/latest-hellman.csv eval/one-hellman-{{method}}.csv "{{label}}"
     cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html

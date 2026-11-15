@@ -32,3 +32,8 @@ bucket.
   `ByteMasks` member on each quotient table, initialized once from its entry
   width. On Hellman it was 1–13% faster than v8 except 192-thread prefetch2,
   which was about 1% slower.
+- **v10:** Removes runtime AVX-512 feature detection. The AVX-512 matcher is
+  compiled when both `avx512f` and `avx512bw` are enabled for the target;
+  otherwise lookup uses the scalar fallback. Hellman was within about 2% of
+  v9 across modes and thread counts, so this change alone did not materially
+  improve lookup speed.
