@@ -117,7 +117,9 @@ impl<const MODE: u8, const ONE_HOT: bool, const BRANCHLESS_SECONDARY: bool, cons
 
     #[inline(always)]
     fn bloom_bits(hash: u64) -> u64 {
-        Self::one_hot_bit(hash) | (1u64 << ((hash >> 32) & 63))
+        let first = hash & 63;
+        let second = (first + 1 + (hash >> 32) % 63) & 63;
+        (1u64 << first) | (1u64 << second)
     }
 
     #[inline(always)]

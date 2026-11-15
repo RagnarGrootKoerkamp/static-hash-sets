@@ -328,6 +328,20 @@ fn main() {
         ),
         (
             |alpha: f32, keys: &[T]| {
+                if !implementation_selected("inline-twohot-cuckoo-lazy-bfs") { return None; }
+                Some(Box::new(InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, false, false, true>::new(1. / alpha, keys)))
+            },
+            vec![0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
+                if !implementation_selected("quotient-lazy-32-twohot32-bfs") { return None; }
+                Some(Box::new(CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, false, true, true, true>::new(1. / alpha, keys)))
+            },
+            vec![0.9],
+        ),
+        (
+            |alpha: f32, keys: &[T]| {
                 if !implementation_selected("inline-onehot-cuckoo-lazy-bfs") { return None; }
                 Some(Box::new(InlineFilterCuckooSet::<{ Mode::Lazy as u8 }, true, false, true>::new(1. / alpha, keys)))
             },

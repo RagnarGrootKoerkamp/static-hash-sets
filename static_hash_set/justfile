@@ -71,3 +71,10 @@ bench-bfs-hellman ns=sizes alphas="0.95,0.98":
 
 fuzz-cuckoo n="10000":
     cargo run --release --bin fuzz_cuckoo --no-default-features --features kphf -- {{n}}
+
+# Run only the new 2-hot BFS variants; compare with the existing 1-hot BFS data.
+bench-twohot-hellman ns=sizes alphas="0.95,0.98":
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.cuckoo-twohot-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; srun --cpu-freq=2551000:UserSpace cargo rustc --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- -C target-feature=+avx512f,+avx512bw && srun --cpu-freq=2551000:UserSpace ../target-hellman/release/static_hash_set --ns {{ns}} --threads 1,16,192 --only inline-twohot-cuckoo-lazy-bfs,quotient-lazy-32-twohot32-bfs --alphas {{alphas}} --quick --queries-per-thread 1000000 > eval/cuckoo-twohot.csv"'
+    scp ae-new:{{remote_repo}}/eval/cuckoo-twohot.csv eval/cuckoo-twohot.csv
+    python3 scripts/merge_bench.py eval/latest-hellman.csv eval/cuckoo-twohot.csv ""
+    cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html

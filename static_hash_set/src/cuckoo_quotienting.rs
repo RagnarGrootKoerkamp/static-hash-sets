@@ -42,21 +42,23 @@ const MIX_INVERSE: u64 = 0x96de1b173f119089;
 )]
 struct ByteMasks {
     width: usize,
+    slots: usize,
     shuffle: [i8; 64],
     starts: u64,
     boundaries: u64,
 }
 
 impl ByteMasks {
-    fn new(width: usize) -> Self {
+    fn new(width: usize, data_bytes: usize) -> Self {
         debug_assert!((1..=8).contains(&width));
         let shuffle = std::array::from_fn(|i| (i % width) as i8);
         let mut starts = 0;
-        for slot in 0..56 / width {
+        for slot in 0..data_bytes / width {
             starts |= 1u64 << (slot * width);
         }
         Self {
             width,
+            slots: data_bytes / width,
             shuffle,
             starts,
             boundaries: starts << width,
@@ -99,11 +101,6 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     }
 
     #[inline(always)]
-    fn might_spill(&self, hash: u64) -> bool {
-        self.0[7] & (1u64 << (hash & 63)) != 0
-    }
-
-    #[inline(always)]
     fn get_bytes(&self, slot: usize, bits: usize) -> u64 {
         let bytes = bits.div_ceil(8);
         self.read(slot * bytes * 8, bits)
@@ -130,7 +127,7 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
             target_feature = "avx512f",
             target_feature = "avx512bw"
         )))]
-        let slots = 56 / masks.width;
+        let slots = masks.slots;
         #[cfg(not(all(
             target_arch = "x86_64",
             target_feature = "avx512f",
@@ -165,7 +162,7 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
         if FILTER {
             // The final word is reserved for the spill summary, so a second
             // word is always available for reads of packed entry data.
-            let pair = self.0[word] as u128 | ((self.0[word + 1] as u128) << 64);
+            let pair = self.0[word] as u128 | ((self.0.get(word + 1).copied().unwrap_or(0) as u128) << 64);
             return ((pair >> shift) as u64) & (u64::MAX >> (64 - bits));
         }
         let mut value = self.0[word] >> shift;
@@ -487,6 +484,7 @@ pub struct CuckooSet<
     const EF: bool = false,
     const FILTER: bool = false,
     const BFS: bool = false,
+    const FILTER32: bool = false,
 > {
     pub slot_ratio: f32,
     num_bins: usize,
@@ -499,8 +497,8 @@ pub struct CuckooSet<
     summary_ready: bool,
 }
 
-impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, const BFS: bool>
-    CuckooSet<MODE, PREFIX, EF, FILTER, BFS>
+impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, const BFS: bool, const FILTER32: bool>
+    CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32>
 {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
@@ -523,6 +521,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
     }
     fn with_capacity(slot_ratio: f32, n: usize) -> Self {
         assert!(slot_ratio >= 1.0);
+        assert!(!FILTER32 || (FILTER && PREFIX == 32 && !EF), "32-bit spill filter requires the byte layout");
         assert!(matches!(PREFIX, 0 | 8 | 16 | 32));
         assert!(
             cfg!(target_endian = "little"),
@@ -530,7 +529,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
         );
         let capacity = (n as f64 * slot_ratio as f64).ceil() as usize;
         let (num_bins, entry_bits, slots, low_bits) = Self::table_layout(capacity);
-        let byte_masks = ByteMasks::new(entry_bits.div_ceil(8));
+        let byte_masks = ByteMasks::new(entry_bits.div_ceil(8), if FILTER32 { 60 } else { 56 });
         assert!(
             num_bins <= u32::MAX as usize,
             "prefetch tokens require 32-bit bucket indices"
@@ -552,7 +551,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
         if !EF {
             if FILTER && PREFIX == 32 {
                 let entry_bytes = entry_bits.div_ceil(8);
-                return (56 / entry_bytes, entry_bits);
+                return ((if FILTER32 { 60 } else { 56 }) / entry_bytes, entry_bits);
             }
             return (
                 (512 - 64 * FILTER as usize)
@@ -720,9 +719,24 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
         self.table[idx].contains_bytes(value, self.entry_bits, &self.byte_masks)
     }
 
+    #[inline(always)]
+    fn spill_bits(hash: u64) -> u64 {
+        if FILTER32 {
+            let first = hash & 31;
+            let second = (first + 1 + (hash >> 32) % 31) & 31;
+            ((1u64 << first) | (1u64 << second)) << 32
+        } else { 1u64 << (hash & 63) }
+    }
+
+    #[inline(always)]
+    fn might_spill(&self, bin: usize, hash: u64) -> bool {
+        let bits = Self::spill_bits(hash);
+        self.table[bin].0[7] & bits == bits
+    }
+
     fn rebuild_spill(&mut self) {
         for bin in self.table.iter_mut() {
-            bin.0[7] = 0;
+            if FILTER32 { bin.0[7] &= u32::MAX as u64; } else { bin.0[7] = 0; }
         }
         for idx in 0..self.num_bins {
             for slot in 0..self.slots {
@@ -731,7 +745,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
                     let key = self.decode(entry, idx);
                     let hash = Self::permute(key, false);
                     let primary = self.bin_idx_1(key);
-                    self.table[primary].0[7] |= 1u64 << (hash & 63);
+                    self.table[primary].0[7] |= Self::spill_bits(hash);
                 }
             }
         }
@@ -786,7 +800,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
 
     #[inline(always)]
     fn contains_lazy_byte_layout(&self, key: T, hash: u64, bin1: usize, entry: u64) -> bool {
-        if !self.table[bin1].might_spill(hash) {
+        if !self.might_spill(bin1, hash) {
             return entry != 0
                 && self.table[bin1].contains_bytes(entry, self.entry_bits, &self.byte_masks);
         }
@@ -823,7 +837,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
             self.low_bits,
         );
         if FILTER {
-            return if self.table[bin1].might_spill(hash) {
+            return if self.might_spill(bin1, hash) {
                 primary_match | self.matches(self.bin_idx_2(key), key, true)
             } else {
                 primary_match
@@ -859,7 +873,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
         }
         if FILTER && self.summary_ready {
             for bin in self.table.iter_mut() {
-                bin.0[7] = u64::MAX;
+                bin.0[7] |= if FILTER32 { (u32::MAX as u64) << 32 } else { u64::MAX };
             }
             self.summary_ready = false;
         }
@@ -968,10 +982,14 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
     }
 }
 
-impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, const BFS: bool>
-    HashSet for CuckooSet<MODE, PREFIX, EF, FILTER, BFS>
+impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, const BFS: bool, const FILTER32: bool>
+    HashSet for CuckooSet<MODE, PREFIX, EF, FILTER, BFS, FILTER32>
 {
     fn name(&self) -> &'static str {
+        if FILTER32 {
+            assert!(BFS && MODE == Mode::Lazy as u8);
+            return "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS>";
+        }
         if BFS {
             assert!(FILTER && PREFIX == 32 && !EF && MODE == Mode::Lazy as u8);
             return "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>";
@@ -1018,7 +1036,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = CuckooSet::<MODE, PREFIX, EF, FILTER, BFS>::new(self.slot_ratio, keys);
+        let h = CuckooSet::<MODE, PREFIX, EF, FILTER, BFS, FILTER32>::new(self.slot_ratio, keys);
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {
@@ -1033,7 +1051,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, co
             return None;
         }
         let primary = self.bin_idx_1(key);
-        Some(self.table[primary].might_spill(Self::permute(key, false)))
+        Some(self.might_spill(primary, Self::permute(key, false)))
     }
 
     fn primary_hit_ratio(&self) -> Option<f32> {

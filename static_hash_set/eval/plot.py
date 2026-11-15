@@ -119,6 +119,8 @@ queries = ["q01", "q50", "q99"]
 label_color = {
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>": "#1565C0",
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>": "#2E7D32",
+    "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>": "#6A1B9A",
+    "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS>": "#EF6C00",
     "HashSet": "red",
     "CuckooSet<Lazy>": "orange",
     "CuckooSet<Eager>": "brown",
@@ -174,6 +176,8 @@ label_color = {
 }
 
 variant_load_colors = {
+    "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>": {0.95: "#6A1B9A", 0.98: "#BA68C8"},
+    "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS>": {0.95: "#EF6C00", 0.98: "#FFB74D"},
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>": {0.95: "#1565C0", 0.98: "#64B5F6"},
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>": {0.95: "#2E7D32", 0.98: "#81C784"},
     "CuckooQuotientSet<Lazy,32,SIMD>": {0.9: "#E000A0"},
@@ -202,6 +206,8 @@ def series_color(name, alpha):
     return shades.get(round(alpha, 2), label_color[name])
 
 display_name = {
+    "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>": "2-hot 64-bit bumped BFS",
+    "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS>": "Quotient lazy + 2-hot 32-bit BFS (60-byte data)",
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>": "1-hot bumped BFS",
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>": "Quotient 32 lazy + 1-hot BFS",
     "CuckooSet<Eager>": "Cuckoo eager",
@@ -352,12 +358,13 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
         }
         data = data[~data["h"].isin(old_quotient_versions)]
     bumped = data["h"].str.contains("BumpedOnly", regex=False)
-    inline_one_hot = data["h"].isin(["InlineOneHotCuckooSet<Lazy,BumpedOnly>", "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>"])
+    inline_one_hot = data["h"].isin(["InlineOneHotCuckooSet<Lazy,BumpedOnly>", "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>", "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>"])
     data = data[~bumped | inline_one_hot]
     data = data[~data["h"].str.contains("<Eager", regex=False)]
     data = data[data["h"] != "CuckooSet<Lazy>"]
     quotienting = data["h"].str.startswith("CuckooQuotientSet<")
     lazy_32_one_hot = data["h"].isin([
+        "CuckooQuotientSet<Lazy,32,SIMD,TwoHot32,BFS>",
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>",
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot>",
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v2",
