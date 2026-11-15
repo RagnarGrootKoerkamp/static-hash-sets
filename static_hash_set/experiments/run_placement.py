@@ -2,10 +2,13 @@
 """Local placement sweeps; results include every seed, including failures."""
 import csv, subprocess, io, argparse
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('--n',type=int,default=1000000);p.add_argument('--seeds',default='1,2,3');p.add_argument('--output',default='experiments/placement-results.csv');p.add_argument('--phase',choices=['baseline','paper','parameters','threshold','bumped','priority-bfs','forced-bfs','priority-evict-bfs'],default='baseline');args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--n',type=int,default=1000000);p.add_argument('--seeds',default='1,2,3');p.add_argument('--output',default='experiments/placement-results.csv');p.add_argument('--phase',choices=['baseline','paper','parameters','threshold','bumped','priority-bfs','forced-bfs','priority-evict-bfs','filter'],default='baseline');p.add_argument('--retained-bits',default='20,24,28,32,40,64');p.add_argument('--negative-queries',type=int,default=1000000);args=p.parse_args()
 subprocess.run(['rustc','-O','--edition=2024','src/cuckoo_construction.rs','-o','/tmp/cuckoo-construction'],check=True)
 loads=[.5,.7,.8,.9,.95,.97,.98,.99,.995,.997,.998,.999]
 configs=[(a,1000000,1.4) for a in (['baseline','oracle'] if args.phase in ('baseline','threshold') else ['section3','section4','section5'])]
+if args.phase=='filter':
+ loads=[.9,.95]
+ configs=[('oracle-shuffled',1000000,1.4,0,bits) for bits in map(int,args.retained_bits.split(','))]
 if args.phase=='priority-evict-bfs':
  loads=[.9,.95]
  configs=[(a,1000000,1.4) for a in ['bfs-priority-evict','bfs-priority-evict-all']]
@@ -30,8 +33,11 @@ with open(args.output,'w',newline='') as f:
    for config in configs:
     alg,budget,switch=config[:3]
     forced=config[3] if len(config)>3 else 0
-    out=subprocess.run(['/tmp/cuckoo-construction',str(args.n),alg,str(load),str(seed),str(budget),str(switch),str(forced)],capture_output=True,text=True,check=True).stdout
+    command=['/tmp/cuckoo-construction',str(args.n),alg,str(load),str(seed),str(budget),str(switch),str(forced)]
+    if len(config)>4:command+=['--filter-bits',str(config[4]),'--filter-queries',str(args.negative_queries)]
+    out=subprocess.run(command,capture_output=True,text=True,check=True).stdout
     row=next(csv.DictReader(io.StringIO(out)))
+    if len(config)>4 and row['status']!='ok':row['retained_hash_bits']=str(config[4])
     if writer is None:writer=csv.DictWriter(f,fieldnames=row.keys());writer.writeheader()
     writer.writerow(row);f.flush()
     print(alg,seed,load,row['status'],row['primary'],row['optimal_prediction'],flush=True)

@@ -89,3 +89,10 @@ bench-twohot-v2-hellman ns="1000000,16000000" alphas="0.9,0.95" methods="inline-
 
 report-twohot-v2:
     python3 scripts/report_twohot_v2.py > eval/cuckoo-twohot-v2-report.md
+
+# Local frozen quotient-filter experiment; f is retained hash width, before quotienting.
+placement-filter n="1000000" seeds="1,2,3" bits="20,24,28,32,40,64" negatives="1000000":
+    python3 experiments/run_placement.py --phase filter --n {{n}} --seeds {{seeds}} --retained-bits {{bits}} --negative-queries {{negatives}} --output experiments/placement-filter.csv
+
+report-filter:
+    python3 experiments/report_filter.py > experiments/filter-report.md

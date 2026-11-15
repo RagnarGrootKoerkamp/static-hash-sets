@@ -9,6 +9,109 @@ fn mix(mut x: u64) -> u64 {
     x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
     x ^ (x >> 31)
 }
+fn prefix_hash(key: u64, seed: u64, side: usize, bits: u32) -> u64 {
+    mix(key ^ mix(seed + side as u64)) >> (64 - bits)
+}
+
+// Frozen query representation: four occupancy bits per bin, followed by eight
+// fixed-width quotient+location entries. Construction keys are not retained.
+struct PackedFilter {
+    bins: usize,
+    hash_bits: u32,
+    quotient_bits: u32,
+    entry_bits: u32,
+    stride: usize,
+    seed: u64,
+    words: Vec<u64>,
+}
+impl PackedFilter {
+    fn mask(bits: u32) -> u64 {
+        if bits == 64 {
+            u64::MAX
+        } else {
+            (1u64 << bits) - 1
+        }
+    }
+    fn write(&mut self, offset: usize, bits: u32, value: u64) {
+        debug_assert_eq!(value & !Self::mask(bits), 0);
+        let word = offset / 64;
+        let shift = offset % 64;
+        self.words[word] |= value << shift;
+        if shift + bits as usize > 64 {
+            self.words[word + 1] |= value >> (64 - shift);
+        }
+    }
+    fn read(&self, offset: usize, bits: u32) -> u64 {
+        let word = offset / 64;
+        let shift = offset % 64;
+        let mut value = self.words[word] >> shift;
+        if shift + bits as usize > 64 {
+            value |= self.words[word + 1] << (64 - shift);
+        }
+        value & Self::mask(bits)
+    }
+    fn bin(&self, hash: u64) -> usize {
+        ((hash as u128 * self.bins as u128) >> self.hash_bits) as usize
+    }
+    fn entry(&self, hash: u64, bin: usize, side: usize) -> u64 {
+        let lower = ((bin as u128) << self.hash_bits).div_ceil(self.bins as u128);
+        let quotient = hash as u128 - lower;
+        debug_assert!(quotient < (1u128 << self.quotient_bits));
+        ((quotient as u64) << 1) | side as u64
+    }
+    fn freeze(experiment: &Experiment) -> Self {
+        let hash_bits = experiment.filter_bits.unwrap();
+        let span = (1u128 << hash_bits).div_ceil(experiment.m as u128);
+        let quotient_bits = 128 - (span - 1).leading_zeros();
+        let entry_bits = quotient_bits + 1;
+        assert!(entry_bits <= 64);
+        let stride = 4 + 8 * entry_bits as usize;
+        let mut filter = Self {
+            bins: experiment.m,
+            hash_bits,
+            quotient_bits,
+            entry_bits,
+            stride,
+            seed: experiment.seed,
+            words: vec![0; (experiment.m * stride).div_ceil(64)],
+        };
+        for bin in 0..experiment.m {
+            let count = experiment.bins[bin].iter().filter(|&&key| key != 0).count();
+            assert!(experiment.bins[bin][..count].iter().all(|&key| key != 0));
+            filter.write(bin * stride, 4, count as u64);
+            for slot in 0..count {
+                let key = experiment.bins[bin][slot];
+                let side = usize::from(!experiment.first(key, bin));
+                let hash = prefix_hash(key, experiment.seed, side, hash_bits);
+                assert_eq!(filter.bin(hash), bin);
+                filter.write(
+                    bin * stride + 4 + slot * entry_bits as usize,
+                    entry_bits,
+                    filter.entry(hash, bin, side),
+                );
+            }
+        }
+        filter
+    }
+    fn contains(&self, key: u64) -> bool {
+        for side in 0..2 {
+            let hash = prefix_hash(key, self.seed, side, self.hash_bits);
+            let bin = self.bin(hash);
+            let target = self.entry(hash, bin, side);
+            let count = self.read(bin * self.stride, 4) as usize;
+            if (0..count).any(|slot| {
+                self.read(
+                    bin * self.stride + 4 + slot * self.entry_bits as usize,
+                    self.entry_bits,
+                ) == target
+            }) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 struct Experiment {
     n: usize,
     m: usize,
@@ -29,6 +132,8 @@ struct Experiment {
     switch_at: f64,
     force_fraction: f64,
     force_cutoff: u64,
+    filter_bits: Option<u32>,
+    filter_queries: usize,
 }
 impl Experiment {
     fn new(
@@ -39,14 +144,26 @@ impl Experiment {
         budget: usize,
         switch_at: f64,
         force_fraction: f64,
+        filter_bits: Option<u32>,
+        filter_queries: usize,
     ) -> Self {
-        let m = (n as f64 / alpha / 8.).ceil() as usize;
+        let mut m = (n as f64 / alpha / 8.).ceil() as usize;
+        if let Some(bits) = filter_bits {
+            assert!((1..=64).contains(&bits));
+            m = m.max(2);
+            assert!(
+                (1u128 << bits) >= m as u128,
+                "retained hash domain must cover the bins"
+            );
+        }
         let mut h = vec![[0; 2]; n + 1];
         let mut priority = vec![0; n + 1];
         for x in 1..=n {
             for side in 0..2 {
-                h[x][side] =
-                    ((mix(x as u64 ^ mix(seed + side as u64)) as u128 * m as u128) >> 64) as usize;
+                h[x][side] = ((prefix_hash(x as u64, seed, side, filter_bits.unwrap_or(64))
+                    as u128
+                    * m as u128)
+                    >> filter_bits.unwrap_or(64)) as usize;
             }
             priority[x] = if ["bfs-large", "oracle-shuffled", "bfs-forced"]
                 .contains(&algorithm.as_str())
@@ -77,6 +194,8 @@ impl Experiment {
             switch_at,
             force_cutoff: (n as f64 * (1. - force_fraction)).round() as u64,
             force_fraction,
+            filter_bits,
+            filter_queries,
         }
     }
     fn first(&self, x: u64, b: usize) -> bool {
@@ -350,7 +469,7 @@ impl Experiment {
             self.force_cutoff
         );
         if inserted != self.n {
-            println!("failed,{inserted},,,,,");
+            println!("failed,{inserted},,,,,,,,,,,,");
             return;
         }
         // One shared end-to-end placement check, run for every successful construction.
@@ -440,15 +559,61 @@ impl Experiment {
                 }
             }
         }
+        let filter_stats = if self.filter_bits.is_some() {
+            let filter = PackedFilter::freeze(self);
+            // Shared end-to-end validation: every original full key must match
+            // its frozen quotient representation, including truncated collisions.
+            for key in 1..=self.n as u64 {
+                assert!(filter.contains(key), "filter false negative for {key}");
+            }
+            let mut tested = 0usize;
+            let mut positives = 0usize;
+            let mut counter = 0u64;
+            while tested < self.filter_queries {
+                let key = mix(counter ^ mix(self.seed ^ 0xa0761d6478bd642f));
+                counter += 1;
+                if key <= self.n as u64 {
+                    continue;
+                }
+                tested += 1;
+                positives += usize::from(filter.contains(key));
+            }
+            if filter.hash_bits == 64 {
+                assert_eq!(positives, 0, "full-width reversible hashes must remain exact");
+            }
+            format!(
+                "{},{},{},{:.8},{},{},{:.10}",
+                filter.hash_bits,
+                filter.quotient_bits,
+                filter.entry_bits,
+                filter.words.len() as f64 * 64. / self.n as f64,
+                tested,
+                positives,
+                positives as f64 / tested as f64
+            )
+        } else {
+            ",,,,,,".to_string()
+        };
         println!(
-            "ok,{inserted},{:.8},{:.8},{threshold:.8},{bumped_hist},{secondary_hist}",
+            "ok,{inserted},{:.8},{:.8},{threshold:.8},{bumped_hist},{secondary_hist},{filter_stats}",
             primary as f64 / self.n as f64,
             best as f64 / self.n as f64
         );
     }
 }
 fn main() {
-    let args: Vec<_> = env::args().collect();
+    let mut args: Vec<_> = env::args().collect();
+    let mut option = |name: &str| -> Option<String> {
+        let index = args.iter().position(|s| s == name)?;
+        assert!(index + 1 < args.len(), "option requires a value");
+        let value = args[index + 1].clone();
+        args.drain(index..index + 2);
+        Some(value)
+    };
+    let filter_bits = option("--filter-bits").map(|s| s.parse::<u32>().unwrap());
+    let filter_queries =
+        option("--filter-queries").map_or(1000000, |s| s.parse::<usize>().unwrap());
+    assert!(filter_queries > 0);
     let arg = |i, default: &str| args.get(i).cloned().unwrap_or(default.to_string());
     let n = arg(1, "1000000").parse().unwrap();
     let algorithm = arg(2, "baseline");
@@ -476,7 +641,18 @@ fn main() {
         .contains(&algorithm.as_str())
     );
     println!(
-        "algorithm,n,seed,bins,load,budget,switch,force_fraction,force_cutoff,status,inserted,primary,optimal_prediction,optimal_threshold,bumped_from_hist,secondary_in_hist"
+        "algorithm,n,seed,bins,load,budget,switch,force_fraction,force_cutoff,status,inserted,primary,optimal_prediction,optimal_threshold,bumped_from_hist,secondary_in_hist,retained_hash_bits,quotient_bits,stored_entry_bits,packed_bits_per_key,negative_queries,false_positives,false_positive_ratio"
     );
-    Experiment::new(n, alpha, seed, algorithm, budget, switch_at, force_fraction).run();
+    Experiment::new(
+        n,
+        alpha,
+        seed,
+        algorithm,
+        budget,
+        switch_at,
+        force_fraction,
+        filter_bits,
+        filter_queries,
+    )
+    .run();
 }

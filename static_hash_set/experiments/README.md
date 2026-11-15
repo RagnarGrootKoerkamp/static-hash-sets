@@ -180,3 +180,25 @@ shared placement and exact-threshold checks. At 90%, the pure variant improves
 stronger priority/location correlation, but accuracy remains below ordinary
 BFS's 87.0286%/83.2229% at those loads. These are placement experiments, with
 no construction or query timings.
+
+## Retained-width filter experiment
+
+```
+just placement-filter
+python3 experiments/report_filter.py > experiments/filter-report.md
+```
+
+Options on the standalone Rust driver are `--filter-bits F` and
+`--filter-queries Q` (default Q=1M). They apply to any construction method.
+Hashes are truncated to their top F bits before bucket range reduction. The
+final query representation keeps only a bucket-relative quotient, a location
+marker, and a four-bit bucket occupancy count; zero fingerprints are valid.
+Construction uses full temporary keys and the existing shared placement check,
+then validates every inserted key against the frozen representation.
+
+The default local sweep uses ordinary shuffled BFS, n=1M, three seeds,
+90%/95% load and F=20/24/28/32/40/64. Each row includes the logical quotient
+width, entry width, physical payload bits/key and empirical false positives
+from 1M known-negative full-width queries. With F=64 the reversible hash makes
+the frozen representation exact. The production byte-aligned implementation is
+described separately in `../quotient-filter-mode.md`.
