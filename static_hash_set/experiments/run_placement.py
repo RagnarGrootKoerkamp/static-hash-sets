@@ -2,10 +2,13 @@
 """Local placement sweeps; results include every seed, including failures."""
 import csv, subprocess, io, argparse
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('--n',type=int,default=1000000);p.add_argument('--seeds',default='1,2,3');p.add_argument('--output',default='experiments/placement-results.csv');p.add_argument('--phase',choices=['baseline','paper','parameters','threshold'],default='baseline');args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--n',type=int,default=1000000);p.add_argument('--seeds',default='1,2,3');p.add_argument('--output',default='experiments/placement-results.csv');p.add_argument('--phase',choices=['baseline','paper','parameters','threshold','bumped'],default='baseline');args=p.parse_args()
 subprocess.run(['rustc','-O','--edition=2024','src/cuckoo_construction.rs','-o','/tmp/cuckoo-construction'],check=True)
 loads=[.5,.7,.8,.9,.95,.97,.98,.99,.995,.997,.998,.999]
 configs=[(a,1000000,1.4) for a in (['baseline','oracle'] if args.phase in ('baseline','threshold') else ['section3','section4','section5'])]
+if args.phase=='bumped':
+ loads=[.95,.98]
+ configs=[(a,1000000,s) for a,s in [('baseline',1.4),('oracle',1.4),('section3',1.4),('section4',1.4),('section5',1.4),('section4',0),('section5',0)]]
 if args.phase=='threshold':
  loads=[.9975,.9977,.9978,.9979]
 if args.phase=='parameters':

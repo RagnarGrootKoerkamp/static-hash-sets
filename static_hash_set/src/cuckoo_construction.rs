@@ -247,13 +247,15 @@ impl Experiment {
             self.switch_at
         );
         if inserted != self.n {
-            println!("failed,{inserted},,,");
+            println!("failed,{inserted},,,,,");
             return;
         }
         // One shared end-to-end placement check, run for every successful construction.
         let mut seen = vec![false; self.n + 1];
         let mut primary = 0;
         let mut labels = Vec::with_capacity(self.n);
+        let mut bumped_from = vec![0usize; self.m];
+        let mut secondary_in = vec![0usize; self.m];
         for b in 0..self.m {
             for x in self.bins[b] {
                 if x == 0 {
@@ -264,10 +266,28 @@ impl Experiment {
                 seen[x] = true;
                 let p = self.first(x as u64, b);
                 primary += usize::from(p);
+                if !p {
+                    bumped_from[self.h[x][0]] += 1;
+                    secondary_in[b] += 1;
+                }
                 labels.push((self.priority[x], p));
             }
         }
         assert_eq!(labels.len(), self.n);
+        let histogram = |counts: &[usize]| {
+            let mut hist = vec![0usize; counts.iter().copied().max().unwrap_or(0) + 1];
+            for &count in counts {
+                hist[count] += 1;
+            }
+            assert_eq!(hist.iter().sum::<usize>(), self.m);
+            assert_eq!(counts.iter().sum::<usize>(), self.n - primary);
+            hist.iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(";")
+        };
+        let bumped_hist = histogram(&bumped_from);
+        let secondary_hist = histogram(&secondary_in);
         labels.sort_unstable();
         let mut correct = primary;
         let mut best = correct;
@@ -284,7 +304,7 @@ impl Experiment {
             }
         }
         println!(
-            "ok,{inserted},{:.8},{:.8},{threshold:.8}",
+            "ok,{inserted},{:.8},{:.8},{threshold:.8},{bumped_hist},{secondary_hist}",
             primary as f64 / self.n as f64,
             best as f64 / self.n as f64
         );
@@ -304,7 +324,7 @@ fn main() {
         ["baseline", "oracle", "section3", "section4", "section5"].contains(&algorithm.as_str())
     );
     println!(
-        "algorithm,n,seed,bins,load,budget,switch,status,inserted,primary,optimal_prediction,optimal_threshold"
+        "algorithm,n,seed,bins,load,budget,switch,status,inserted,primary,optimal_prediction,optimal_threshold,bumped_from_hist,secondary_in_hist"
     );
     Experiment::new(n, alpha, seed, algorithm, budget, switch_at).run();
 }

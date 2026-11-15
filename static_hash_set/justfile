@@ -57,3 +57,7 @@ bench_one:
 # LLM-reusable local placement experiments (no time measurements).
 placement phase="baseline" seeds="1,2,3" n="1000000":
     python3 experiments/run_placement.py --phase {{phase}} --seeds {{seeds}} --n {{n}} --output experiments/placement-{{phase}}.csv
+
+placement-bumped seeds="1,2,3" n="1000000":
+    just placement bumped {{seeds}} {{n}}
+    python3 experiments/report_bumped.py > experiments/bumped-report.md

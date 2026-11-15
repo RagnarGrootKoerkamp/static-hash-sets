@@ -77,3 +77,23 @@ runs from failure to success: immediate-look-ahead section 4 at 99.5% (seed 2),
 and immediate-look-ahead section 5 at 99.7% (seed 1). Other parameter runs are
 unchanged. The switch is evaluated at insertion boundaries; once the revealed
 hash count crosses it, subsequent insertions use look-ahead throughout.
+
+## Bumped keys per bin
+
+```
+just placement bumped
+python3 experiments/report_bumped.py > experiments/bumped-report.md
+```
+
+This focused sweep uses n=1,000,000, loads 95%/98%, seeds 1/2/3, and a
+1,000,000-kick limit. It includes baseline, oracle, sections 3/4/5 at the
+default switch, and sections 4/5 with immediate look-ahead. All 42 runs succeed.
+
+The driver records two exact count histograms as semicolon-separated CSV fields:
+`bumped_from_hist[k]` counts bins whose primary hashes have exactly k keys stored
+elsewhere; `secondary_in_hist[k]` counts bins currently storing exactly k keys
+at their secondary choice. These have equal totals of secondary keys, but
+very different distributions. Coincident hash choices count as primary.
+Histogram index zero includes empty bins and bins with no applicable keys.
+The report pools bin counts across seeds and includes means, p95, and observed
+maxima. Histogram sums and weighted sums are checked against bin/key totals.
