@@ -120,3 +120,33 @@ counted as successful first probes for either prediction. The selected cutoff
 is checked against actual placements. See `priority-bfs-report.md` for results.
 The original section 5 experiment and its lower-priority prediction direction
 are unchanged.
+
+## Forcing large keys to secondary
+
+```
+just placement forced-bfs
+python3 experiments/report_priority_bfs.py > experiments/priority-bfs-report.md
+```
+
+Sweeps the largest 0%, 1%, 2.5%, 5%, 7.5%, 10%, 12.5%, 15%, 17.5%, 20%, and
+25% at 90%/95% load and three seeds. `bfs-forced` only offers h2 as an insertion
+root for a forced key, and never relocates a forced resident back to h1. Other
+keys retain both choices. Its BFS remains exhaustive over legal assignments;
+a failure is a genuine inability to place the current constrained graph.
+Successful placements check every forced key's bucket, in addition to the
+shared membership/uniqueness and threshold-count checks. Zero forcing exactly
+reproduces the soft-priority BFS results for every seed and load.
+
+The optional seventh numeric CLI argument is the forced fraction (default 0),
+valid only with `bfs-forced`. CSV fields `force_fraction` and `force_cutoff`
+describe this constraint separately from the optimized prediction threshold.
+The best threshold is still fitted over all cuts. Higher forcing does not
+improve accuracy in these runs and eventually causes infeasibility. Reported
+accuracy for partial-success groups includes successful constructions only.
+
+`priority-bfs-key-bands.csv` records a diagnostic of the successful soft BFS
+placement at 95% load, seed 1. It was collected by tallying the existing final
+placement labels in ten equal key ranges. Counts sum exactly to the number
+of secondary keys in `placement-priority-bfs.csv`. The top decile is only
+26.057% secondary, versus 11.692% in the bottom decile: there is a bias, but
+primary remains the better prediction for both ranges.

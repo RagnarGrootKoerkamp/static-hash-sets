@@ -26,6 +26,8 @@ struct Experiment {
     algorithm: String,
     budget: usize,
     switch_at: f64,
+    force_fraction: f64,
+    force_cutoff: u64,
 }
 impl Experiment {
     fn new(
@@ -35,6 +37,7 @@ impl Experiment {
         algorithm: String,
         budget: usize,
         switch_at: f64,
+        force_fraction: f64,
     ) -> Self {
         let m = (n as f64 / alpha / 8.).ceil() as usize;
         let mut h = vec![[0; 2]; n + 1];
@@ -44,11 +47,12 @@ impl Experiment {
                 h[x][side] =
                     ((mix(x as u64 ^ mix(seed + side as u64)) as u128 * m as u128) >> 64) as usize;
             }
-            priority[x] = if algorithm == "bfs-large" || algorithm == "oracle-shuffled" {
-                x as u64
-            } else {
-                mix(x as u64 ^ mix(seed + 2))
-            };
+            priority[x] =
+                if ["bfs-large", "oracle-shuffled", "bfs-forced"].contains(&algorithm.as_str()) {
+                    x as u64
+                } else {
+                    mix(x as u64 ^ mix(seed + 2))
+                };
         }
         Self {
             n,
@@ -67,6 +71,8 @@ impl Experiment {
             algorithm,
             budget,
             switch_at,
+            force_cutoff: (n as f64 * (1. - force_fraction)).round() as u64,
+            force_fraction,
         }
     }
     fn first(&self, x: u64, b: usize) -> bool {
@@ -78,11 +84,20 @@ impl Experiment {
     fn empty(&self, b: usize) -> bool {
         self.bins[b][7] == 0
     }
+    fn forced(&self, key: u64) -> bool {
+        self.algorithm == "bfs-forced" && key > self.force_cutoff
+    }
     // Exhaustive augmenting paths: failure certifies this graph cannot be placed.
     fn bfs(&mut self, x: u64) -> bool {
         let tag = x as usize;
         let mut q = Vec::new();
-        for b in self.h[x as usize] {
+        let candidates = self.h[x as usize];
+        let roots = if self.forced(x) {
+            &candidates[1..]
+        } else {
+            &candidates[..]
+        };
+        for &b in roots {
             if self.stamp[b] != tag {
                 self.stamp[b] = tag;
                 self.parent[b] = self.m;
@@ -105,7 +120,7 @@ impl Experiment {
                 return true;
             }
             let mut order = [0, 1, 2, 3, 4, 5, 6, 7];
-            if self.algorithm == "bfs-large" {
+            if self.algorithm == "bfs-large" || self.algorithm == "bfs-forced" {
                 // Prefer sending large primary keys to secondary. If a return
                 // to primary is necessary, prefer returning a small key.
                 order.sort_unstable_by_key(|&s| {
@@ -119,6 +134,11 @@ impl Experiment {
             }
             for s in order {
                 let y = self.bins[b][s] as usize;
+                // Hard-forced keys have only one legal bucket and cannot
+                // participate in an eviction edge back to primary.
+                if self.forced(y as u64) {
+                    continue;
+                }
                 let dest = self.h[y][0] ^ self.h[y][1] ^ b;
                 if self.stamp[dest] != tag {
                     self.stamp[dest] = tag;
@@ -154,7 +174,9 @@ impl Experiment {
         }
     }
     fn insert(&mut self, mut x: u64) -> bool {
-        if ["oracle", "oracle-shuffled", "bfs-large"].contains(&self.algorithm.as_str()) {
+        if ["oracle", "oracle-shuffled", "bfs-large", "bfs-forced"]
+            .contains(&self.algorithm.as_str())
+        {
             return self.bfs(x);
         }
         let baseline = self.algorithm == "baseline";
@@ -247,7 +269,8 @@ impl Experiment {
     }
     fn run(&mut self) {
         let mut inserted = 0;
-        let high_priority = self.algorithm == "bfs-large" || self.algorithm == "oracle-shuffled";
+        let high_priority =
+            ["bfs-large", "oracle-shuffled", "bfs-forced"].contains(&self.algorithm.as_str());
         let mut insertion_order: Vec<_> = (1..=self.n as u64).collect();
         if high_priority {
             let mut shuffle_rng = mix(self.seed ^ 0xd1b54a32d192ed03);
@@ -263,14 +286,16 @@ impl Experiment {
             inserted += 1;
         }
         print!(
-            "{},{},{},{},{:.8},{},{:.2},",
+            "{},{},{},{},{:.8},{},{:.2},{:.8},{},",
             self.algorithm,
             self.n,
             self.seed,
             self.m,
             self.n as f64 / (8 * self.m) as f64,
             self.budget,
-            self.switch_at
+            self.switch_at,
+            self.force_fraction,
+            self.force_cutoff
         );
         if inserted != self.n {
             println!("failed,{inserted},,,,,");
@@ -289,6 +314,9 @@ impl Experiment {
                 }
                 let x = x as usize;
                 assert!(x <= self.n && !seen[x] && (b == self.h[x][0] || b == self.h[x][1]));
+                if self.forced(x as u64) {
+                    assert_eq!(b, self.h[x][1], "forced key must stay secondary");
+                }
                 seen[x] = true;
                 let p = self.first(x as u64, b);
                 primary += usize::from(p);
@@ -376,6 +404,9 @@ fn main() {
     let seed = arg(4, "1").parse().unwrap();
     let budget = arg(5, "1000000").parse().unwrap();
     let switch_at = arg(6, "1.4").parse().unwrap();
+    let force_fraction = arg(7, "0").parse::<f64>().unwrap();
+    assert!((0. ..=1.).contains(&force_fraction));
+    assert!(force_fraction == 0. || algorithm == "bfs-forced");
     assert!(n > 0 && alpha > 0. && alpha <= 1.);
     assert!(
         [
@@ -383,6 +414,7 @@ fn main() {
             "oracle",
             "oracle-shuffled",
             "bfs-large",
+            "bfs-forced",
             "section3",
             "section4",
             "section5"
@@ -390,7 +422,7 @@ fn main() {
         .contains(&algorithm.as_str())
     );
     println!(
-        "algorithm,n,seed,bins,load,budget,switch,status,inserted,primary,optimal_prediction,optimal_threshold,bumped_from_hist,secondary_in_hist"
+        "algorithm,n,seed,bins,load,budget,switch,force_fraction,force_cutoff,status,inserted,primary,optimal_prediction,optimal_threshold,bumped_from_hist,secondary_in_hist"
     );
-    Experiment::new(n, alpha, seed, algorithm, budget, switch_at).run();
+    Experiment::new(n, alpha, seed, algorithm, budget, switch_at, force_fraction).run();
 }
