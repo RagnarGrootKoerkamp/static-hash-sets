@@ -38,8 +38,13 @@ Benchmark selectors:
 - `quotient-filter32-onehot-bfs`
 - `quotient-filter32-twohot32-bfs`
 
-Both are registered with 90%/95% load defaults and plot styles. The existing
-CSV/plot has not been populated with timing runs for these new filters.
+Both are registered with 90%/95% load defaults and plot styles.
+`just bench-filter32-hellman` runs both variants and updates the CSV and plot.
+
+Hellman job 2185 completed successfully in 14m26s: 25 sizes, 90%/95% load,
+1/16/192 threads, 1M queries/thread, one quick pass, 2.551 GHz. Its 900 rows
+are saved in `eval/cuckoo-filter32.csv`, merged into `eval/latest-hellman.csv`,
+and included in `eval/latest-hellman.html`. No 98% configurations ran.
 
 ## Validation and local statistics
 
