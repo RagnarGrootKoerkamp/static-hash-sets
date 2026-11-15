@@ -52,3 +52,25 @@ For the new filters use `just bench-twohot-hellman 1000000 0.9,0.95`.
 
 Future benchmark and fuzz defaults use 90%/95% load. The completed comparison
 above used 95%/98%; those historical measurements are preserved.
+
+## Two-hot comparison, Hellman job 2175
+
+Completed successfully. Raw data: `eval/cuckoo-twohot.csv` (900 rows), merged
+into the combined CSV and plot. Full tables are in `cuckoo-bfs-results.md`;
+regenerate them with `just report-cuckoo-bfs`. That report also accepts future
+matched size/load sweeps by deriving the size set and loads from the data.
+
+At n=60M and 95% target load, the 64-bit inline two-hot filter reduces negative
+filter passes from 1.897% to 0.315%. The 32-bit quotient two-hot filter reduces
+passes from 2.012% to 1.438%, while reducing memory/input from 0.9357 to 0.8421
+(10% less than the 64-bit-summary quotient table, 30% less than inline).
+
+Both two-hot variants are slower to query in this implementation despite their
+lower filter-pass rates. For 50%-positive queries, single-thread prefetch2 time
+is about 2.09x/1.96x the inline one-hot BFS time at 95%/98% load. Quotient
+32-bit two-hot is about 1.20x/1.18x the quotient one-hot BFS time. At 192 threads,
+the quotient variant is about 8%/5% slower. These are geometric means across
+25 sizes from separate quick runs, not repeated paired measurements.
+
+Future benchmark defaults remain 90%/95%. The 98% data above belongs to the
+already-submitted historical comparison.
