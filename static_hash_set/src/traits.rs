@@ -64,18 +64,26 @@ pub trait HashSet: Send + Sync {
             self.prefetch(unsafe { *keys.get_unchecked(i + lookahead) });
             c += self.contains(keys[i]) as usize;
         }
+        for &key in &keys[keys.len().saturating_sub(lookahead)..] {
+            c += self.contains(key) as usize;
+        }
         std::hint::black_box(c);
         c
     }
     fn count_prefetch2(&self, keys: &[T]) -> usize {
-        assert!(keys.len() >= 32);
         let lookahead = 32;
+        if keys.len() < lookahead {
+            return self.count_loop(keys);
+        }
         let mut tokens: [usize; 32] =
             std::array::from_fn(|i| self.prefetch(unsafe { *keys.get_unchecked(i) }));
         let mut c = 0;
         for i in 0..keys.len().saturating_sub(lookahead) {
             c += self.contains_with_token(keys[i], tokens[i % 32]) as usize;
             tokens[i % 32] = self.prefetch(unsafe { *keys.get_unchecked(i + lookahead) });
+        }
+        for i in keys.len() - lookahead..keys.len() {
+            c += self.contains_with_token(keys[i], tokens[i % 32]) as usize;
         }
         std::hint::black_box(c);
         c
