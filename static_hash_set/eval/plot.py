@@ -117,6 +117,8 @@ cpu_names = {
 queries = ["q01", "q50", "q99"]
 
 label_color = {
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>": "#1565C0",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>": "#2E7D32",
     "HashSet": "red",
     "CuckooSet<Lazy>": "orange",
     "CuckooSet<Eager>": "brown",
@@ -172,13 +174,15 @@ label_color = {
 }
 
 variant_load_colors = {
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>": {0.95: "#1565C0", 0.98: "#64B5F6"},
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>": {0.95: "#2E7D32", 0.98: "#81C784"},
     "CuckooQuotientSet<Lazy,32,SIMD>": {0.9: "#E000A0"},
     "CuckooSet<Eager>": {0.7: "#0057FF", 0.9: "#5C91FF"},
     "CuckooSet<Lazy>": {0.7: "#FFA500", 0.9: "#FFC266"},
     "GrowableRightCuckooSet": {0.7: "#9C179E", 0.9: "#D18AD4"},
     "FilteredCuckooSet<Lazy>": {0.7: "#009E73", 0.9: "#66C2A5"},
     "InlineTwoHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#1F78B4", 0.9: "#80B1D3"},
-    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#D81B60", 0.9: "#F48FB1", 0.95: "#880E4F"},
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly>": {0.7: "#D81B60", 0.9: "#F48FB1", 0.95: "#880E4F", 0.98: "#D81B60"},
     "InlineOneHotCuckooSet<Lazy,BumpedOnly> v2": {0.7: "#9B00FF", 0.9: "#DC72FF"},
     "InlineOneHotCuckooSet<Lazy,BumpedOnly,Branchless>": {0.7: "#F50057", 0.9: "#FF6090"},
     "SpillCuckooSet<Lazy,BeforePrimary,u8>": {0.7: "#6b21a8", 0.9: "#c4b5fd"},
@@ -189,7 +193,7 @@ variant_load_colors = {
     "PhfSet<PtrHash>": {0.7: "#FFD600", 0.9: "#FFEB66"},
     "kPhfSet<kPtrHash>": {0.7: "#0000FF", 0.9: "#0000FF", 0.95: "#0000FF"},
     "MockHashSet": {0.7: "#000000", 0.9: "#000000", 1.0: "#000000"},
-    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v11": {0.9: "#AD1457", 0.95: "#F06292"},
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v11": {0.9: "#AD1457", 0.95: "#F06292", 0.98: "#FFAB91"},
 }
 
 
@@ -198,6 +202,8 @@ def series_color(name, alpha):
     return shades.get(round(alpha, 2), label_color[name])
 
 display_name = {
+    "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>": "1-hot bumped BFS",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>": "Quotient 32 lazy + 1-hot BFS",
     "CuckooSet<Eager>": "Cuckoo eager",
     "CuckooSet<Lazy>": "Cuckoo lazy",
     "GrowableRightCuckooSet": "Growable rightward cuckoo",
@@ -346,12 +352,13 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
         }
         data = data[~data["h"].isin(old_quotient_versions)]
     bumped = data["h"].str.contains("BumpedOnly", regex=False)
-    inline_one_hot = data["h"] == "InlineOneHotCuckooSet<Lazy,BumpedOnly>"
+    inline_one_hot = data["h"].isin(["InlineOneHotCuckooSet<Lazy,BumpedOnly>", "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>"])
     data = data[~bumped | inline_one_hot]
     data = data[~data["h"].str.contains("<Eager", regex=False)]
     data = data[data["h"] != "CuckooSet<Lazy>"]
     quotienting = data["h"].str.startswith("CuckooQuotientSet<")
     lazy_32_one_hot = data["h"].isin([
+        "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>",
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot>",
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v2",
         "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v3",

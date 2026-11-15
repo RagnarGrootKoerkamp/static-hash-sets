@@ -61,3 +61,13 @@ placement phase="baseline" seeds="1,2,3" n="1000000":
 placement-bumped seeds="1,2,3" n="1000000":
     just placement bumped {{seeds}} {{n}}
     python3 experiments/report_bumped.py > experiments/bumped-report.md
+
+# Compare only the filtered cuckoo constructors, preserving existing load curves.
+bench-bfs-hellman ns=sizes alphas="0.95,0.98":
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.cuckoo-bfs-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; srun --cpu-freq=2551000:UserSpace cargo rustc --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- -C target-feature=+avx512f,+avx512bw && srun --cpu-freq=2551000:UserSpace ../target-hellman/release/static_hash_set --ns {{ns}} --threads 1,16,192 --only inline-onehot-cuckoo-lazy,inline-onehot-cuckoo-lazy-bfs,quotient-lazy-32-onehot,quotient-lazy-32-onehot-bfs --alphas {{alphas}} --quick --queries-per-thread 1000000 > eval/cuckoo-bfs.csv"'
+    scp ae-new:{{remote_repo}}/eval/cuckoo-bfs.csv eval/cuckoo-bfs.csv
+    python3 scripts/merge_bench.py eval/latest-hellman.csv eval/cuckoo-bfs.csv "" --rename "CuckooQuotientSet<Lazy,32,SIMD,OneHot>" "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v11"
+    cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
+
+fuzz-cuckoo n="10000":
+    cargo run --release --bin fuzz_cuckoo --no-default-features --features kphf -- {{n}}

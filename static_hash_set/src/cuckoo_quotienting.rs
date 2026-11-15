@@ -21,7 +21,7 @@
 //! NOTE: THIS FILE IS AI SLOP!!!
 
 pub use crate::cuckoo::Mode;
-use crate::{traits::HashSet, T};
+use crate::{T, traits::HashSet};
 
 /// Bit width of the reversible hash domain.
 pub const KEY_BITS: u32 = 64;
@@ -33,7 +33,11 @@ const MIX_INVERSE: u64 = 0x96de1b173f119089;
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw")),
+    not(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw"
+    )),
     allow(dead_code)
 )]
 struct ByteMasks {
@@ -62,7 +66,11 @@ impl ByteMasks {
 
 #[inline(always)]
 #[cfg_attr(
-    not(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw")),
+    not(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw"
+    )),
     allow(dead_code)
 )]
 fn has_equal_byte_entry(equal: u64, masks: &ByteMasks) -> bool {
@@ -84,11 +92,7 @@ struct PackedBin<const P: usize, const FILTER: bool = false>([u64; 8]);
 impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     fn storage_bits(bits: usize) -> usize {
         if FILTER && P == 32 && bits <= 56 {
-            if bits <= 48 {
-                48
-            } else {
-                56
-            }
+            if bits <= 48 { 48 } else { 56 }
         } else {
             bits
         }
@@ -114,16 +118,32 @@ impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
     #[inline(always)]
     fn contains_bytes(&self, value: u64, bits: usize, masks: &ByteMasks) -> bool {
         debug_assert_eq!(masks.width, bits.div_ceil(8));
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "avx512f",
+            target_feature = "avx512bw"
+        ))]
         return unsafe { self.contains_bytes_avx512(value, masks) };
 
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            target_feature = "avx512f",
+            target_feature = "avx512bw"
+        )))]
         let slots = 56 / masks.width;
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            target_feature = "avx512f",
+            target_feature = "avx512bw"
+        )))]
         (0..slots).any(|slot| self.get_bytes(slot, bits) == value)
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw"
+    ))]
     #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn contains_bytes_avx512(&self, value: u64, masks: &ByteMasks) -> bool {
         use std::arch::x86_64::*;
@@ -466,6 +486,7 @@ pub struct CuckooSet<
     const PREFIX: usize = 16,
     const EF: bool = false,
     const FILTER: bool = false,
+    const BFS: bool = false,
 > {
     pub slot_ratio: f32,
     num_bins: usize,
@@ -478,13 +499,21 @@ pub struct CuckooSet<
     summary_ready: bool,
 }
 
-impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
-    CuckooSet<MODE, PREFIX, EF, FILTER>
+impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, const BFS: bool>
+    CuckooSet<MODE, PREFIX, EF, FILTER, BFS>
 {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
-        for &k in keys {
-            this.insert(k);
+        if BFS {
+            assert!(!EF, "BFS construction requires unsorted buckets");
+            let mut workspace = crate::cuckoo::BfsConstruction::new(this.num_bins);
+            for &key in keys {
+                this.insert_bfs(key, &mut workspace);
+            }
+        } else {
+            for &k in keys {
+                this.insert(k);
+            }
         }
         if FILTER {
             this.rebuild_spill();
@@ -622,8 +651,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
 
     #[inline(always)]
     fn matches(&self, idx: usize, key: T, secondary: bool) -> bool {
-        key != 0
-            && self.contains_entry(idx, self.entry(key, secondary))
+        key != 0 && self.contains_entry(idx, self.entry(key, secondary))
     }
 
     #[inline(always)]
@@ -636,12 +664,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         if self.byte_layout() {
             self.table[idx].get_bytes(slot, self.entry_bits)
         } else {
-            self.table[idx].get_encoded::<EF>(
-                slot,
-                self.entry_bits,
-                self.slots,
-                self.low_bits,
-            )
+            self.table[idx].get_encoded::<EF>(slot, self.entry_bits, self.slots, self.low_bits)
         }
     }
 
@@ -677,12 +700,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
                 .expect("full bucket");
             self.table[idx].set_bytes(slot, self.entry_bits, value);
         } else {
-            self.table[idx].push_encoded::<EF>(
-                value,
-                self.entry_bits,
-                self.slots,
-                self.low_bits,
-            );
+            self.table[idx].push_encoded::<EF>(value, self.entry_bits, self.slots, self.low_bits);
         }
     }
 
@@ -767,31 +785,19 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
     }
 
     #[inline(always)]
-    fn contains_lazy_byte_layout(
-        &self,
-        key: T,
-        hash: u64,
-        bin1: usize,
-        entry: u64,
-    ) -> bool {
+    fn contains_lazy_byte_layout(&self, key: T, hash: u64, bin1: usize, entry: u64) -> bool {
         if !self.table[bin1].might_spill(hash) {
             return entry != 0
-                && self
-                    .table[bin1]
-                    .contains_bytes(entry, self.entry_bits, &self.byte_masks);
+                && self.table[bin1].contains_bytes(entry, self.entry_bits, &self.byte_masks);
         }
 
         let secondary_product = (Self::permute(key, true) as u128) * self.num_bins as u128;
         let bin2 = (secondary_product >> 64) as usize;
         let secondary_entry = (((secondary_product as u64) >> (65 - self.entry_bits)) << 1) | 1;
-        let primary_match = entry != 0
-            && self
-                .table[bin1]
-                .contains_bytes(entry, self.entry_bits, &self.byte_masks);
+        let primary_match =
+            entry != 0 && self.table[bin1].contains_bytes(entry, self.entry_bits, &self.byte_masks);
         primary_match
-            | self
-                .table[bin2]
-                .contains_bytes(secondary_entry, self.entry_bits, &self.byte_masks)
+            | self.table[bin2].contains_bytes(secondary_entry, self.entry_bits, &self.byte_masks)
     }
 
     #[inline(always)]
@@ -901,6 +907,51 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
         }
     }
 
+    fn insert_bfs(&mut self, key: T, workspace: &mut crate::cuckoo::BfsConstruction) {
+        assert_ne!(key, 0, "zero keys are not supported");
+        if self.contains_eager(key) {
+            return;
+        }
+        let primary = self.bin_idx_1(key);
+        let secondary = self.bin_idx_2(key);
+        let roots = if self.entry(key, false) == 0 {
+            vec![secondary]
+        } else {
+            vec![primary, secondary]
+        };
+        let path = workspace.path(&roots, self.slots, |bin, slot| {
+            let entry = self.get_entry(bin, slot);
+            if entry == 0 {
+                return (true, None);
+            }
+            let occupant = self.decode(entry, bin);
+            let alternate_secondary = entry & 1 == 0;
+            let alternate = if alternate_secondary {
+                self.bin_idx_2(occupant)
+            } else {
+                self.bin_idx_1(occupant)
+            };
+            (
+                false,
+                (self.entry(occupant, alternate_secondary) != 0).then_some(alternate),
+            )
+        });
+        for pair in path.windows(2) {
+            let (dst, ds) = pair[0];
+            let (src, ss) = pair[1];
+            let displaced = self.get_entry(src, ss);
+            let occupant = self.decode(displaced, src);
+            self.set_entry(dst, ds, self.entry(occupant, displaced & 1 == 0));
+        }
+        let &(root, slot) = path.last().unwrap();
+        self.set_entry(
+            root,
+            slot,
+            self.entry(key, root != primary || self.entry(key, false) == 0),
+        );
+        self.len += 1;
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
         self.table.iter().enumerate().flat_map(move |(idx, _)| {
             (0..self.slots).filter_map(move |slot| {
@@ -917,10 +968,14 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
     }
 }
 
-impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool> HashSet
-    for CuckooSet<MODE, PREFIX, EF, FILTER>
+impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool, const BFS: bool>
+    HashSet for CuckooSet<MODE, PREFIX, EF, FILTER, BFS>
 {
     fn name(&self) -> &'static str {
+        if BFS {
+            assert!(FILTER && PREFIX == 32 && !EF && MODE == Mode::Lazy as u8);
+            return "CuckooQuotientSet<Lazy,32,SIMD,OneHot,BFS>";
+        }
         if FILTER {
             return match (Mode::from(MODE), PREFIX, EF) {
                 (Mode::Eager, 0, false) => "CuckooQuotientSet<Eager,0,SWAR,OneHot>",
@@ -963,7 +1018,7 @@ impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool> Ha
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = CuckooSet::<MODE, PREFIX, EF, FILTER>::new(self.slot_ratio, keys);
+        let h = CuckooSet::<MODE, PREFIX, EF, FILTER, BFS>::new(self.slot_ratio, keys);
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {

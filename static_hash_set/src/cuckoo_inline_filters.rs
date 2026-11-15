@@ -64,6 +64,7 @@ pub struct InlineFilterCuckooSet<
     const MODE: u8,
     const ONE_HOT: bool,
     const BRANCHLESS_SECONDARY: bool = false,
+    const BFS: bool = false,
 > {
     pub slot_ratio: f32,
     num_bins: usize,
@@ -73,16 +74,20 @@ pub struct InlineFilterCuckooSet<
     summary_ready: bool,
 }
 
-impl<
-    const MODE: u8,
-    const ONE_HOT: bool,
-    const BRANCHLESS_SECONDARY: bool,
-> InlineFilterCuckooSet<MODE, ONE_HOT, BRANCHLESS_SECONDARY>
+impl<const MODE: u8, const ONE_HOT: bool, const BRANCHLESS_SECONDARY: bool, const BFS: bool>
+    InlineFilterCuckooSet<MODE, ONE_HOT, BRANCHLESS_SECONDARY, BFS>
 {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
-        for &k in keys {
-            this.insert(k);
+        if BFS {
+            let mut workspace = crate::cuckoo::BfsConstruction::new(this.num_bins);
+            for &key in keys {
+                this.insert_bfs(key, &mut workspace);
+            }
+        } else {
+            for &k in keys {
+                this.insert(k);
+            }
         }
         this.rebuild_spill();
         this.summary_ready = true;
@@ -342,9 +347,18 @@ impl<
         let mut count = 0;
         for chunk in &mut chunks {
             let batch: &[T; B] = chunk.try_into().unwrap();
-            count += self.contains_batch(batch).iter().filter(|&&found| found).count();
+            count += self
+                .contains_batch(batch)
+                .iter()
+                .filter(|&&found| found)
+                .count();
         }
-        count + chunks.remainder().iter().filter(|&&key| self.contains(key)).count()
+        count
+            + chunks
+                .remainder()
+                .iter()
+                .filter(|&&key| self.contains(key))
+                .count()
     }
 
     #[inline(always)]
@@ -430,6 +444,33 @@ impl<
         self.insert_to_bin(key, self.bin_idx_1(key));
     }
 
+    fn insert_bfs(&mut self, key: T, workspace: &mut crate::cuckoo::BfsConstruction) {
+        if self.contains_eager(key) {
+            return;
+        }
+        if key == 0 {
+            self.has_zero = true;
+            self.len += 1;
+            return;
+        }
+        let roots = [self.bin_idx_1(key), self.bin_idx_2(key)];
+        let path = workspace.path(&roots, BIN_SIZE, |bin, slot| {
+            let occupant = self.table[bin].slots[slot];
+            (
+                occupant == 0,
+                (occupant != 0).then(|| self.bin_idx_1(occupant) ^ self.bin_idx_2(occupant) ^ bin),
+            )
+        });
+        for pair in path.windows(2) {
+            let (dst, ds) = pair[0];
+            let (src, ss) = pair[1];
+            self.table[dst].slots[ds] = self.table[src].slots[ss];
+        }
+        let &(root, slot) = path.last().unwrap();
+        self.table[root].slots[slot] = key;
+        self.len += 1;
+    }
+
     /// Internal version that forces the key into a specific option.
     #[inline(always)]
     fn insert_to_bin(&mut self, key: T, idx: usize) {
@@ -462,13 +503,18 @@ impl<
     }
 }
 
-impl<
-    const MODE: u8,
-    const ONE_HOT: bool,
-    const BRANCHLESS_SECONDARY: bool,
-> HashSet for InlineFilterCuckooSet<MODE, ONE_HOT, BRANCHLESS_SECONDARY>
+impl<const MODE: u8, const ONE_HOT: bool, const BRANCHLESS_SECONDARY: bool, const BFS: bool> HashSet
+    for InlineFilterCuckooSet<MODE, ONE_HOT, BRANCHLESS_SECONDARY, BFS>
 {
     fn name(&self) -> &'static str {
+        if BFS {
+            return match (Mode::from(MODE), ONE_HOT) {
+                (Mode::Lazy, true) => "InlineOneHotCuckooSet<Lazy,BumpedOnly,BFS>",
+                (Mode::Eager, true) => "InlineOneHotCuckooSet<Eager,BumpedOnly,BFS>",
+                (Mode::Lazy, false) => "InlineTwoHotCuckooSet<Lazy,BumpedOnly,BFS>",
+                (Mode::Eager, false) => "InlineTwoHotCuckooSet<Eager,BumpedOnly,BFS>",
+            };
+        }
         if BRANCHLESS_SECONDARY {
             return match Mode::from(MODE) {
                 Mode::Eager => "InlineOneHotCuckooSet<Eager,BumpedOnly,Branchless>",
@@ -483,7 +529,7 @@ impl<
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = InlineFilterCuckooSet::<MODE, ONE_HOT, BRANCHLESS_SECONDARY>::new(
+        let h = InlineFilterCuckooSet::<MODE, ONE_HOT, BRANCHLESS_SECONDARY, BFS>::new(
             self.slot_ratio,
             keys,
         );
