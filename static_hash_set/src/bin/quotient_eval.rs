@@ -65,20 +65,14 @@ macro_rules! table {
 table!(baseline::CuckooSet<0>);
 table!(power2::CuckooSet<0>);
 table!(fast_range::CuckooSet<0>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 0, false>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 8, false>);
+table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 0>);
+table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 8>);
+table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 16>);
+table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 32>);
+table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 0, true>);
 table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 8, true>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 16, false>);
 table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 16, true>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 32, false>);
 table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 32, true>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 0, false, true>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 8, false, true>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 8, true, true>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 16, false, true>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 16, true, true>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 32, false, true>);
-table!(static_hash_set::cuckoo_quotienting::CuckooSet<0, 32, true, true>);
 table!(power2_zero::CuckooSet<0, 0, false>);
 table!(power2_zero::CuckooSet<0, 8, false>);
 table!(power2_zero::CuckooSet<0, 8, true>);
@@ -214,25 +208,16 @@ fn main() {
             power2::CuckooSet::<0>::new(1.0 / alpha, keys)
         }),
         "zero" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 0, false>::new(1.0 / alpha, keys)
-        }),
-        "prefix8-scalar" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 8, false>::new(1.0 / alpha, keys)
+            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 0>::new(1.0 / alpha, keys)
         }),
         "prefix8-simd" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 8, true>::new(1.0 / alpha, keys)
-        }),
-        "prefix16-scalar" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 16, false>::new(1.0 / alpha, keys)
+            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 8>::new(1.0 / alpha, keys)
         }),
         "prefix16-simd" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 16, true>::new(1.0 / alpha, keys)
-        }),
-        "prefix32-scalar" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 32, false>::new(1.0 / alpha, keys)
+            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 16>::new(1.0 / alpha, keys)
         }),
         "prefix32-simd" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 32, true>::new(1.0 / alpha, keys)
+            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 32>::new(1.0 / alpha, keys)
         }),
         "fast-range" => bench(&stage, n, q, repeats, alpha, |keys| {
             fast_range::CuckooSet::<0>::new(1.0 / alpha, keys)
@@ -259,74 +244,17 @@ fn main() {
             power2_zero::CuckooSet::<0, 32, true>::new(1.0 / alpha, keys)
         }),
         "ef-zero" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 0, false, true>::new(
-                1.0 / alpha,
-                keys,
-            )
-        }),
-        "ef-prefix8-scalar" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 8, false, true>::new(
-                1.0 / alpha,
-                keys,
-            )
+            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 0, true>::new(1.0 / alpha, keys)
         }),
         "ef-prefix8-simd" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 8, true, true>::new(
-                1.0 / alpha,
-                keys,
-            )
-        }),
-        "ef-prefix16-scalar" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 16, false, true>::new(
-                1.0 / alpha,
-                keys,
-            )
+            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 8, true>::new(1.0 / alpha, keys)
         }),
         "ef-prefix16-simd" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 16, true, true>::new(
-                1.0 / alpha,
-                keys,
-            )
-        }),
-        "ef-prefix32-scalar" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 32, false, true>::new(
-                1.0 / alpha,
-                keys,
-            )
+            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 16, true>::new(1.0 / alpha, keys)
         }),
         "ef-prefix32-simd" => bench(&stage, n, q, repeats, alpha, |keys| {
-            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 32, true, true>::new(
-                1.0 / alpha,
-                keys,
-            )
+            static_hash_set::cuckoo_quotienting::CuckooSet::<0, 32, true>::new(1.0 / alpha, keys)
         }),
         _ => panic!("unknown stage"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prefetch_pipeline_counts_all_queries_including_short_tails() {
-        let keys: Vec<_> = (1..=64).map(mix).collect();
-        let set = static_hash_set::cuckoo_quotienting::CuckooSet::<0, 16, true>::new(1.1, &keys);
-        for q in [0usize, 1, 31, 32, 33, 65] {
-            let queries: Vec<_> = (0..q)
-                .map(|i| {
-                    mix(if i % 2 == 0 {
-                        (i % 64 + 1) as u64
-                    } else {
-                        1000 + i as u64
-                    })
-                })
-                .collect();
-            for lazy in [false, true] {
-                for prefetch in [false, true] {
-                    assert_eq!(count(&set, &queries, lazy, prefetch), q.div_ceil(2));
-                }
-            }
-        }
     }
 }

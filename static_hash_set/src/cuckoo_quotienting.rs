@@ -6,10 +6,10 @@
 //! The reversible hash accepts full-width nonzero u64 keys.
 //! Zero keys are rejected. Zero entries pad unused slots; a zero primary encoding
 //! is routed to the secondary bucket, where the location bit makes it nonzero.
-//! `PREFIX` selects 8-, 16-, or 32-bit filtering (0 disables it); `SIMD=false`
-//! selects u128 SWAR lane comparisons. The default is 16-bit SIMD filtering.
+//! `PREFIX` selects 8-, 16-, or 32-bit SIMD filtering (0 disables it).
+//! The default is 16-bit SIMD filtering.
 //! Set the fourth const parameter `EF=true` for sorted Elias–Fano buckets:
-//! `CuckooSet::<0, 16, true, true>::new(slot_ratio, keys)`. Prefixes and suffixes
+//! `CuckooSet::<0, 16, true>::new(slot_ratio, keys)`. Prefixes and suffixes
 //! hold the low parts; a unary high-part bitmap also records occupancy. EF
 //! buckets support up to 16 entries and are re-sorted on insertion/replacement.
 //! Set the fifth const parameter to `true` for a 1-hot summary of keys placed
@@ -21,7 +21,7 @@
 //! NOTE: THIS FILE IS AI SLOP!!!
 
 pub use crate::cuckoo::Mode;
-use crate::{T, traits::HashSet};
+use crate::{traits::HashSet, T};
 
 /// Bit width of the reversible hash domain.
 pub const KEY_BITS: u32 = 64;
@@ -35,12 +35,37 @@ const MIX_INVERSE: u64 = 0x96de1b173f119089;
 /// the first `slots * P` bits hold slot prefixes, followed by their packed
 /// suffixes in slot order. Elias–Fano stores only each entry's low bits in
 /// that layout and appends a unary bitmap for high bits and occupancy. SIMD
-/// changes how prefixes are compared, not where bits are stored.
+/// compares prefixes before the full quotient is checked. With a 32-bit prefix
+/// and a spill filter, suffixes use byte-aligned lanes: 16 bits for quotients up
+/// to 48 bits, and 24 bits for quotients up to 56 bits. The non-EF 48-bit layout
+/// has eight entries, so both vectors can be checked without a ninth-slot path.
 #[derive(Clone)]
 #[repr(align(64))]
-struct PackedBin<const P: usize, const SIMD: bool, const FILTER: bool = false>([u64; 8]);
+struct PackedBin<const P: usize, const FILTER: bool = false>([u64; 8]);
 
-impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FILTER> {
+impl<const P: usize, const FILTER: bool> PackedBin<P, FILTER> {
+    #[inline(always)]
+    fn contains_eight_48(&self, value: u64) -> bool {
+        let prefixes = unsafe { self.0.as_ptr().cast::<[u32; 8]>().read_unaligned() };
+        let suffixes = unsafe { self.0.as_ptr().add(4).cast::<[u16; 8]>().read_unaligned() };
+        let prefixes = wide::u32x8::from(prefixes).simd_eq(wide::u32x8::splat(value as u32));
+        let suffixes = wide::u32x8::from(wide::u16x8::from(suffixes))
+            .simd_eq(wide::u32x8::splat((value >> 32) as u32));
+        (prefixes & suffixes).to_bitmask() != 0
+    }
+
+    fn storage_bits(bits: usize) -> usize {
+        if FILTER && P == 32 && bits <= 56 {
+            if bits <= 48 {
+                48
+            } else {
+                56
+            }
+        } else {
+            bits
+        }
+    }
+
     #[inline(always)]
     fn might_spill(&self, hash: u64) -> bool {
         self.0[7] & (1u64 << (hash & 63)) != 0
@@ -53,6 +78,12 @@ impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FI
         }
         let word = offset / 64;
         let shift = offset % 64;
+        if FILTER {
+            // The final word is reserved for the spill summary, so a second
+            // word is always available for reads of packed entry data.
+            let pair = self.0[word] as u128 | ((self.0[word + 1] as u128) << 64);
+            return ((pair >> shift) as u64) & (u64::MAX >> (64 - bits));
+        }
         let mut value = self.0[word] >> shift;
         if shift + bits > 64 {
             value |= self.0[word + 1] << (64 - shift);
@@ -80,6 +111,30 @@ impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FI
         if P == 0 {
             return self.read(slot * bits, bits);
         }
+        if FILTER && P == 32 && bits <= 48 {
+            let prefix = unsafe { self.0.as_ptr().cast::<u32>().add(slot).read() } as u64;
+            let suffix = unsafe {
+                self.0
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(slots * 4 + slot * 2)
+                    .cast::<u16>()
+                    .read_unaligned()
+            } as u64;
+            return prefix | (suffix << 32);
+        }
+        if FILTER && P == 32 && bits <= 56 {
+            let prefix = unsafe { self.0.as_ptr().cast::<u32>().add(slot).read() } as u64;
+            let suffix = unsafe {
+                self.0
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(slots * 4 + slot * 3)
+                    .cast::<u32>()
+                    .read_unaligned()
+            } & 0x00ff_ffff;
+            return prefix | ((suffix as u64) << 32);
+        }
         let prefix = self.read(slot * P, P);
         prefix | (self.read(slots * P + slot * (bits - P), bits - P) << P)
     }
@@ -92,6 +147,16 @@ impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FI
     fn write_value(&mut self, slot: usize, bits: usize, slots: usize, value: u64) {
         if P == 0 {
             self.write(slot * bits, bits, value);
+            return;
+        }
+        if FILTER && P == 32 && bits <= 48 {
+            self.write(slot * 32, 32, value as u32 as u64);
+            self.write(slots * 32 + slot * 16, 16, value >> 32);
+            return;
+        }
+        if FILTER && P == 32 && bits <= 56 {
+            self.write(slot * 32, 32, value as u32 as u64);
+            self.write(slots * 32 + slot * 24, 24, value >> 32);
             return;
         }
         self.write(slot * P, P, value & (u64::MAX >> (64 - P)));
@@ -113,55 +178,47 @@ impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FI
     #[inline(always)]
     fn candidates(&self, value: u64, slots: usize) -> u32 {
         let mut mask = 0u32;
-        if SIMD {
-            // All loads stay inside the cacheline. Lanes beyond `slots` are masked out.
-            // Prefixes occupy the first slots*P bits in native little-endian lane order.
-            match P {
-                8 => {
-                    let lanes = unsafe { self.0.as_ptr().cast::<[u8; 16]>().read_unaligned() };
-                    mask = wide::u8x16::from(lanes)
-                        .simd_eq(wide::u8x16::splat(value as u8))
+        // All loads stay inside the cacheline. Lanes beyond `slots` are masked out.
+        // Prefixes occupy the first slots*P bits in native little-endian lane order.
+        match P {
+            8 => {
+                let lanes = unsafe { self.0.as_ptr().cast::<[u8; 16]>().read_unaligned() };
+                mask = wide::u8x16::from(lanes)
+                    .simd_eq(wide::u8x16::splat(value as u8))
+                    .to_bitmask() as u32;
+            }
+            16 => {
+                let lanes = unsafe { self.0.as_ptr().cast::<[u16; 16]>().read_unaligned() };
+                mask = wide::u16x16::from(lanes)
+                    .simd_eq(wide::u16x16::splat(value as u16))
+                    .to_bitmask() as u32;
+            }
+            32 => {
+                if FILTER && slots <= 9 {
+                    let lanes = unsafe { self.0.as_ptr().cast::<[u32; 8]>().read_unaligned() };
+                    mask = wide::u32x8::from(lanes)
+                        .simd_eq(wide::u32x8::splat(value as u32))
                         .to_bitmask() as u32;
-                }
-                16 => {
-                    let lanes = unsafe { self.0.as_ptr().cast::<[u16; 16]>().read_unaligned() };
-                    mask = wide::u16x16::from(lanes)
-                        .simd_eq(wide::u16x16::splat(value as u16))
-                        .to_bitmask() as u32;
-                }
-                32 => {
-                    for block in 0..2 {
-                        let lanes = unsafe {
-                            self.0
-                                .as_ptr()
-                                .add(block * 4)
-                                .cast::<[u32; 8]>()
-                                .read_unaligned()
-                        };
-                        mask |= (wide::u32x8::from(lanes)
-                            .simd_eq(wide::u32x8::splat(value as u32))
-                            .to_bitmask() as u32)
-                            << (block * 8);
+                    if slots == 9 {
+                        mask |= ((self.0[4] as u32 == value as u32) as u32) << 8;
                     }
+                    return mask & ((1 << slots) - 1);
                 }
-                _ => unreachable!(),
-            }
-        } else {
-            // Exact zero-lane detection on u128 blocks (no borrow into adjacent lanes).
-            let ones = u128::MAX / ((1u128 << P) - 1);
-            let high = ones << (P - 1);
-            let low = high - ones;
-            let needle = (value as u128 & ((1u128 << P) - 1)) * ones;
-            for block in 0..(slots * P).div_ceil(128) {
-                let word = self.0[block * 2] as u128 | ((self.0[block * 2 + 1] as u128) << 64);
-                let x = word ^ needle;
-                let mut equal = !(((x & low).wrapping_add(low)) | x | low) & high;
-                while equal != 0 {
-                    let lane = equal.trailing_zeros() as usize / P;
-                    mask |= 1 << (block * (128 / P) + lane);
-                    equal &= equal - 1;
+                for block in 0..2 {
+                    let lanes = unsafe {
+                        self.0
+                            .as_ptr()
+                            .add(block * 4)
+                            .cast::<[u32; 8]>()
+                            .read_unaligned()
+                    };
+                    mask |= (wide::u32x8::from(lanes)
+                        .simd_eq(wide::u32x8::splat(value as u32))
+                        .to_bitmask() as u32)
+                        << (block * 8);
                 }
             }
+            _ => unreachable!(),
         }
         mask & ((1 << slots) - 1)
     }
@@ -175,6 +232,34 @@ impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FI
             return (0..slots).any(|slot| self.get(slot, bits, slots) == value);
         }
         let mut mask = self.candidates(value, slots);
+        if FILTER && P == 32 && bits <= 48 && slots >= 8 {
+            let suffixes = unsafe {
+                self.0
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(slots * 4)
+                    .cast::<[u16; 8]>()
+                    .read_unaligned()
+            };
+            let mut suffix_mask = wide::u16x8::from(suffixes)
+                .simd_eq(wide::u16x8::splat((value >> 32) as u16))
+                .to_bitmask() as u32;
+            if slots == 9 {
+                suffix_mask |= (((self.get(8, bits, slots) >> 32) == (value >> 32)) as u32) << 8;
+            }
+            return mask & suffix_mask != 0;
+        }
+        if FILTER && P == 32 && bits <= 56 {
+            let slot = (mask.trailing_zeros() as usize).min(slots - 1);
+            let found = (mask != 0) & (self.get(slot, bits, slots) == value);
+            mask &= mask.wrapping_sub(1);
+            if mask == 0 {
+                return found;
+            }
+            if found {
+                return true;
+            }
+        }
         while mask != 0 {
             let slot = mask.trailing_zeros() as usize;
             if self.get(slot, bits, slots) == value {
@@ -186,7 +271,10 @@ impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FI
     }
     #[inline(always)]
     fn bitmap(&self, bits: usize, slots: usize, low_bits: usize) -> u64 {
-        self.read(slots * low_bits, (1 << (bits - low_bits)) + slots)
+        self.read(
+            slots * Self::storage_bits(low_bits),
+            (1 << (bits - low_bits)) + slots,
+        )
     }
 
     #[inline(always)]
@@ -246,7 +334,11 @@ impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FI
             self.write_value(i, low_bits, slots, entry & low_mask);
             bitmap |= 1 << ((entry >> low_bits) as usize + i);
         }
-        self.write(slots * low_bits, (1 << (bits - low_bits)) + slots, bitmap);
+        self.write(
+            slots * Self::storage_bits(low_bits),
+            (1 << (bits - low_bits)) + slots,
+            bitmap,
+        );
     }
 
     #[inline(always)]
@@ -308,13 +400,12 @@ impl<const P: usize, const SIMD: bool, const FILTER: bool> PackedBin<P, SIMD, FI
 pub struct CuckooSet<
     const MODE: u8,
     const PREFIX: usize = 16,
-    const SIMD: bool = true,
     const EF: bool = false,
     const FILTER: bool = false,
 > {
     pub slot_ratio: f32,
     num_bins: usize,
-    table: Box<[PackedBin<PREFIX, SIMD, FILTER>]>,
+    table: Box<[PackedBin<PREFIX, FILTER>]>,
     entry_bits: usize,
     slots: usize,
     low_bits: usize,
@@ -322,8 +413,8 @@ pub struct CuckooSet<
     summary_ready: bool,
 }
 
-impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, const FILTER: bool>
-    CuckooSet<MODE, PREFIX, SIMD, EF, FILTER>
+impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool>
+    CuckooSet<MODE, PREFIX, EF, FILTER>
 {
     pub fn new(slot_ratio: f32, keys: &[T]) -> Self {
         let mut this = Self::with_capacity(slot_ratio, keys.len());
@@ -352,7 +443,7 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, cons
         Self {
             slot_ratio,
             num_bins,
-            table: vec![PackedBin::<PREFIX, SIMD, FILTER>([0; 8]); num_bins].into_boxed_slice(),
+            table: vec![PackedBin::<PREFIX, FILTER>([0; 8]); num_bins].into_boxed_slice(),
             entry_bits,
             slots,
             low_bits,
@@ -363,7 +454,14 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, cons
 
     fn bin_layout(entry_bits: usize) -> (usize, usize) {
         if !EF {
-            return ((512 - 64 * FILTER as usize) / entry_bits, entry_bits);
+            if FILTER && PREFIX == 32 && entry_bits <= 48 {
+                return (8, entry_bits);
+            }
+            return (
+                (512 - 64 * FILTER as usize)
+                    / PackedBin::<PREFIX, FILTER>::storage_bits(entry_bits),
+                entry_bits,
+            );
         }
         // At most 16 lanes, matching the existing SIMD prefix filters. Choose
         // floor(log2(2^entry_bits / slots)) low bits, with prefix lanes intact.
@@ -371,7 +469,9 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, cons
             let high_bits = slots.next_power_of_two().ilog2() as usize;
             let low_bits = entry_bits.saturating_sub(high_bits).max(PREFIX);
             let bitmap_bits = (1usize << (entry_bits - low_bits)) + slots;
-            if slots * low_bits + bitmap_bits <= 512 - 64 * FILTER as usize {
+            if slots * PackedBin::<PREFIX, FILTER>::storage_bits(low_bits) + bitmap_bits
+                <= 512 - 64 * FILTER as usize
+            {
                 return (slots, low_bits);
             }
         }
@@ -487,9 +587,11 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, cons
 
     #[inline(always)]
     pub fn prefetch_first(&self, key: T) -> usize {
-        let bin_idx = self.bin_idx_1(key);
+        let hash = Self::permute(key, false);
+        let bin_idx = (((hash as u128) * self.num_bins as u128) >> 64) as usize;
         prefetch_index::prefetch_index(&self.table, bin_idx);
-        bin_idx
+        // Carry the hash so lazy lookup can reuse it for the quotient and spill bit.
+        hash as usize
     }
     #[inline(always)]
     pub fn prefetch_second(&self, key: T) -> usize {
@@ -499,7 +601,8 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, cons
     }
     #[inline(always)]
     pub fn prefetch_both(&self, key: T) -> usize {
-        let b1 = self.prefetch_first(key);
+        let b1 = self.bin_idx_1(key);
+        prefetch_index::prefetch_index(&self.table, b1);
         let b2 = self.prefetch_second(key);
         (b1 << 32) | (b2 as u32) as usize
     }
@@ -513,7 +616,7 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, cons
 
     #[inline(always)]
     pub fn contains_lazy(&self, key: T) -> bool {
-        self.contains_lazy_with_token(key, self.bin_idx_1(key))
+        self.contains_lazy_with_token(key, Self::permute(key, false) as usize)
     }
 
     #[inline(always)]
@@ -529,20 +632,82 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, cons
         }
     }
 
+    #[inline(never)]
+    fn count_loop_fixed_48(&self, keys: &[T]) -> usize {
+        let mut chunks = keys.chunks_exact(4);
+        let mut first_count = 0;
+        let mut second_count = 0;
+        for keys in &mut chunks {
+            first_count +=
+                self.contains_lazy_fixed_48(keys[0], Self::permute(keys[0], false)) as usize;
+            second_count +=
+                self.contains_lazy_fixed_48(keys[1], Self::permute(keys[1], false)) as usize;
+            first_count +=
+                self.contains_lazy_fixed_48(keys[2], Self::permute(keys[2], false)) as usize;
+            second_count +=
+                self.contains_lazy_fixed_48(keys[3], Self::permute(keys[3], false)) as usize;
+        }
+        for &key in chunks.remainder() {
+            first_count += self.contains_lazy_fixed_48(key, Self::permute(key, false)) as usize;
+        }
+        std::hint::black_box(first_count + second_count)
+    }
+
     #[inline(always)]
-    pub fn contains_lazy_with_token(&self, key: T, bin1: usize) -> bool {
+    fn has_fixed_48_layout(&self) -> bool {
+        FILTER && !EF && PREFIX == 32 && self.entry_bits <= 48
+    }
+
+    #[inline(always)]
+    fn contains_lazy_fixed_48(&self, key: T, hash: u64) -> bool {
         if key == 0 {
             return false;
         }
+        let product = (hash as u128) * self.num_bins as u128;
+        let entry = ((product as u64) >> (65 - self.entry_bits)) << 1;
+        let primary = unsafe { self.table.get_unchecked((product >> 64) as usize) };
+        let primary_match = primary.contains_eight_48(entry) & (entry != 0);
+        // The summary includes keys whose primary encoding is zero as well.
+        if primary.might_spill(hash) {
+            let secondary_product = (Self::permute(key, true) as u128) * self.num_bins as u128;
+            let secondary = unsafe { self.table.get_unchecked((secondary_product >> 64) as usize) };
+            let secondary_entry = (((secondary_product as u64) >> (65 - self.entry_bits)) << 1) | 1;
+            return primary_match | secondary.contains_eight_48(secondary_entry);
+        }
+        primary_match
+    }
+
+    #[inline(always)]
+    pub fn contains_lazy_with_token(&self, key: T, token: usize) -> bool {
+        if key == 0 {
+            return false;
+        }
+        let hash = token as u64;
+        let product = (hash as u128) * self.num_bins as u128;
+        let bin1 = (product >> 64) as usize;
+        let entry = ((product as u64) >> (65 - self.entry_bits)) << 1;
+        if self.has_fixed_48_layout() {
+            return self.contains_lazy_fixed_48(key, hash);
+        }
         // A zero primary encoding is always stored in its secondary bucket.
-        if self.entry(key, false) == 0 {
+        if entry == 0 {
             return self.matches(self.bin_idx_2(key), key, true);
         }
-        if self.matches(bin1, key, false) {
-            return true;
+        let primary_match = self.table[bin1].contains_encoded::<EF>(
+            entry,
+            self.entry_bits,
+            self.slots,
+            self.low_bits,
+        );
+        if FILTER {
+            return if self.table[bin1].might_spill(hash) {
+                primary_match | self.matches(self.bin_idx_2(key), key, true)
+            } else {
+                primary_match
+            };
         }
-        if FILTER && !self.table[bin1].might_spill(Self::permute(key, false)) {
-            return false;
+        if primary_match {
+            return true;
         }
         if !self.table[bin1].full_encoded::<EF>(self.entry_bits, self.slots, self.low_bits) {
             return false;
@@ -652,77 +817,87 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, cons
     }
 }
 
-impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, const FILTER: bool>
-    HashSet for CuckooSet<MODE, PREFIX, SIMD, EF, FILTER>
+impl<const MODE: u8, const PREFIX: usize, const EF: bool, const FILTER: bool> HashSet
+    for CuckooSet<MODE, PREFIX, EF, FILTER>
 {
+    fn count_loop(&self, keys: &[T]) -> usize {
+        if Mode::from(MODE) == Mode::Lazy && self.has_fixed_48_layout() {
+            return self.count_loop_fixed_48(keys);
+        }
+        let count = keys.iter().filter(|&&key| self.contains(key)).count();
+        std::hint::black_box(count)
+    }
+
+    fn count_prefetch2(&self, keys: &[T]) -> usize {
+        if keys.len() < 32 {
+            return self.count_loop(keys);
+        }
+        let mut tokens: [usize; 32] = std::array::from_fn(|i| self.prefetch(keys[i]));
+        let mut count = 0;
+        if Mode::from(MODE) == Mode::Lazy && self.has_fixed_48_layout() {
+            for i in 0..keys.len() - 32 {
+                count += self.contains_lazy_fixed_48(keys[i], tokens[i % 32] as u64) as usize;
+                tokens[i % 32] = self.prefetch_first(keys[i + 32]);
+            }
+            for i in keys.len() - 32..keys.len() {
+                count += self.contains_lazy_fixed_48(keys[i], tokens[i % 32] as u64) as usize;
+            }
+        } else {
+            for i in 0..keys.len() - 32 {
+                count += self.contains_with_token(keys[i], tokens[i % 32]) as usize;
+                tokens[i % 32] = self.prefetch(keys[i + 32]);
+            }
+            for i in keys.len() - 32..keys.len() {
+                count += self.contains_with_token(keys[i], tokens[i % 32]) as usize;
+            }
+        }
+        std::hint::black_box(count)
+    }
+
     fn name(&self) -> &'static str {
         if FILTER {
-            return match (Mode::from(MODE), PREFIX, SIMD, EF) {
-                (Mode::Eager, 0, _, false) => "CuckooQuotientSet<Eager,0,SWAR,OneHot>",
-                (Mode::Eager, 0, _, true) => "CuckooQuotientSet<Eager,0,SWAR,EF,OneHot>",
-                (Mode::Lazy, 0, _, false) => "CuckooQuotientSet<Lazy,0,SWAR,OneHot>",
-                (Mode::Lazy, 0, _, true) => "CuckooQuotientSet<Lazy,0,SWAR,EF,OneHot>",
-                (Mode::Eager, 8, false, false) => "CuckooQuotientSet<Eager,8,SWAR,OneHot>",
-                (Mode::Eager, 8, false, true) => "CuckooQuotientSet<Eager,8,SWAR,EF,OneHot>",
-                (Mode::Lazy, 8, false, false) => "CuckooQuotientSet<Lazy,8,SWAR,OneHot>",
-                (Mode::Lazy, 8, false, true) => "CuckooQuotientSet<Lazy,8,SWAR,EF,OneHot>",
-                (Mode::Eager, 8, true, false) => "CuckooQuotientSet<Eager,8,SIMD,OneHot>",
-                (Mode::Eager, 8, true, true) => "CuckooQuotientSet<Eager,8,SIMD,EF,OneHot>",
-                (Mode::Lazy, 8, true, false) => "CuckooQuotientSet<Lazy,8,SIMD,OneHot>",
-                (Mode::Lazy, 8, true, true) => "CuckooQuotientSet<Lazy,8,SIMD,EF,OneHot>",
-                (Mode::Eager, 16, false, false) => "CuckooQuotientSet<Eager,16,SWAR,OneHot>",
-                (Mode::Eager, 16, false, true) => "CuckooQuotientSet<Eager,16,SWAR,EF,OneHot>",
-                (Mode::Lazy, 16, false, false) => "CuckooQuotientSet<Lazy,16,SWAR,OneHot>",
-                (Mode::Lazy, 16, false, true) => "CuckooQuotientSet<Lazy,16,SWAR,EF,OneHot>",
-                (Mode::Eager, 16, true, false) => "CuckooQuotientSet<Eager,16,SIMD,OneHot>",
-                (Mode::Eager, 16, true, true) => "CuckooQuotientSet<Eager,16,SIMD,EF,OneHot>",
-                (Mode::Lazy, 16, true, false) => "CuckooQuotientSet<Lazy,16,SIMD,OneHot>",
-                (Mode::Lazy, 16, true, true) => "CuckooQuotientSet<Lazy,16,SIMD,EF,OneHot>",
-                (Mode::Eager, 32, false, false) => "CuckooQuotientSet<Eager,32,SWAR,OneHot>",
-                (Mode::Eager, 32, false, true) => "CuckooQuotientSet<Eager,32,SWAR,EF,OneHot>",
-                (Mode::Lazy, 32, false, false) => "CuckooQuotientSet<Lazy,32,SWAR,OneHot>",
-                (Mode::Lazy, 32, false, true) => "CuckooQuotientSet<Lazy,32,SWAR,EF,OneHot>",
-                (Mode::Eager, 32, true, false) => "CuckooQuotientSet<Eager,32,SIMD,OneHot>",
-                (Mode::Eager, 32, true, true) => "CuckooQuotientSet<Eager,32,SIMD,EF,OneHot>",
-                (Mode::Lazy, 32, true, false) => "CuckooQuotientSet<Lazy,32,SIMD,OneHot>",
-                (Mode::Lazy, 32, true, true) => "CuckooQuotientSet<Lazy,32,SIMD,EF,OneHot>",
+            return match (Mode::from(MODE), PREFIX, EF) {
+                (Mode::Eager, 0, false) => "CuckooQuotientSet<Eager,0,SWAR,OneHot>",
+                (Mode::Eager, 0, true) => "CuckooQuotientSet<Eager,0,SWAR,EF,OneHot>",
+                (Mode::Lazy, 0, false) => "CuckooQuotientSet<Lazy,0,SWAR,OneHot>",
+                (Mode::Lazy, 0, true) => "CuckooQuotientSet<Lazy,0,SWAR,EF,OneHot>",
+                (Mode::Eager, 8, false) => "CuckooQuotientSet<Eager,8,SIMD,OneHot>",
+                (Mode::Eager, 8, true) => "CuckooQuotientSet<Eager,8,SIMD,EF,OneHot>",
+                (Mode::Lazy, 8, false) => "CuckooQuotientSet<Lazy,8,SIMD,OneHot>",
+                (Mode::Lazy, 8, true) => "CuckooQuotientSet<Lazy,8,SIMD,EF,OneHot>",
+                (Mode::Eager, 16, false) => "CuckooQuotientSet<Eager,16,SIMD,OneHot>",
+                (Mode::Eager, 16, true) => "CuckooQuotientSet<Eager,16,SIMD,EF,OneHot>",
+                (Mode::Lazy, 16, false) => "CuckooQuotientSet<Lazy,16,SIMD,OneHot>",
+                (Mode::Lazy, 16, true) => "CuckooQuotientSet<Lazy,16,SIMD,EF,OneHot>",
+                (Mode::Eager, 32, false) => "CuckooQuotientSet<Eager,32,SIMD,OneHot>",
+                (Mode::Eager, 32, true) => "CuckooQuotientSet<Eager,32,SIMD,EF,OneHot>",
+                (Mode::Lazy, 32, false) => "CuckooQuotientSet<Lazy,32,SIMD,OneHot>",
+                (Mode::Lazy, 32, true) => "CuckooQuotientSet<Lazy,32,SIMD,EF,OneHot>",
                 _ => unreachable!("unsupported prefix width"),
             };
         }
-        match (Mode::from(MODE), PREFIX, SIMD, EF) {
-            (Mode::Eager, 0, _, false) => "CuckooQuotientSet<Eager,0,SWAR>",
-            (Mode::Eager, 0, _, true) => "CuckooQuotientSet<Eager,0,SWAR,EF>",
-            (Mode::Eager, 8, false, false) => "CuckooQuotientSet<Eager,8,SWAR>",
-            (Mode::Eager, 8, false, true) => "CuckooQuotientSet<Eager,8,SWAR,EF>",
-            (Mode::Eager, 8, true, false) => "CuckooQuotientSet<Eager,8,SIMD>",
-            (Mode::Eager, 8, true, true) => "CuckooQuotientSet<Eager,8,SIMD,EF>",
-            (Mode::Eager, 16, false, false) => "CuckooQuotientSet<Eager,16,SWAR>",
-            (Mode::Eager, 16, false, true) => "CuckooQuotientSet<Eager,16,SWAR,EF>",
-            (Mode::Eager, 16, true, false) => "CuckooQuotientSet<Eager,16,SIMD>",
-            (Mode::Eager, 16, true, true) => "CuckooQuotientSet<Eager,16,SIMD,EF>",
-            (Mode::Eager, 32, false, false) => "CuckooQuotientSet<Eager,32,SWAR>",
-            (Mode::Eager, 32, false, true) => "CuckooQuotientSet<Eager,32,SWAR,EF>",
-            (Mode::Eager, 32, true, false) => "CuckooQuotientSet<Eager,32,SIMD>",
-            (Mode::Eager, 32, true, true) => "CuckooQuotientSet<Eager,32,SIMD,EF>",
-            (Mode::Lazy, 0, _, false) => "CuckooQuotientSet<Lazy,0,SWAR>",
-            (Mode::Lazy, 0, _, true) => "CuckooQuotientSet<Lazy,0,SWAR,EF>",
-            (Mode::Lazy, 8, false, false) => "CuckooQuotientSet<Lazy,8,SWAR>",
-            (Mode::Lazy, 8, false, true) => "CuckooQuotientSet<Lazy,8,SWAR,EF>",
-            (Mode::Lazy, 8, true, false) => "CuckooQuotientSet<Lazy,8,SIMD>",
-            (Mode::Lazy, 8, true, true) => "CuckooQuotientSet<Lazy,8,SIMD,EF>",
-            (Mode::Lazy, 16, false, false) => "CuckooQuotientSet<Lazy,16,SWAR>",
-            (Mode::Lazy, 16, false, true) => "CuckooQuotientSet<Lazy,16,SWAR,EF>",
-            (Mode::Lazy, 16, true, false) => "CuckooQuotientSet<Lazy,16,SIMD>",
-            (Mode::Lazy, 16, true, true) => "CuckooQuotientSet<Lazy,16,SIMD,EF>",
-            (Mode::Lazy, 32, false, false) => "CuckooQuotientSet<Lazy,32,SWAR>",
-            (Mode::Lazy, 32, false, true) => "CuckooQuotientSet<Lazy,32,SWAR,EF>",
-            (Mode::Lazy, 32, true, false) => "CuckooQuotientSet<Lazy,32,SIMD>",
-            (Mode::Lazy, 32, true, true) => "CuckooQuotientSet<Lazy,32,SIMD,EF>",
+        match (Mode::from(MODE), PREFIX, EF) {
+            (Mode::Eager, 0, false) => "CuckooQuotientSet<Eager,0,SWAR>",
+            (Mode::Eager, 0, true) => "CuckooQuotientSet<Eager,0,SWAR,EF>",
+            (Mode::Eager, 8, false) => "CuckooQuotientSet<Eager,8,SIMD>",
+            (Mode::Eager, 8, true) => "CuckooQuotientSet<Eager,8,SIMD,EF>",
+            (Mode::Eager, 16, false) => "CuckooQuotientSet<Eager,16,SIMD>",
+            (Mode::Eager, 16, true) => "CuckooQuotientSet<Eager,16,SIMD,EF>",
+            (Mode::Eager, 32, false) => "CuckooQuotientSet<Eager,32,SIMD>",
+            (Mode::Eager, 32, true) => "CuckooQuotientSet<Eager,32,SIMD,EF>",
+            (Mode::Lazy, 0, false) => "CuckooQuotientSet<Lazy,0,SWAR>",
+            (Mode::Lazy, 0, true) => "CuckooQuotientSet<Lazy,0,SWAR,EF>",
+            (Mode::Lazy, 8, false) => "CuckooQuotientSet<Lazy,8,SIMD>",
+            (Mode::Lazy, 8, true) => "CuckooQuotientSet<Lazy,8,SIMD,EF>",
+            (Mode::Lazy, 16, false) => "CuckooQuotientSet<Lazy,16,SIMD>",
+            (Mode::Lazy, 16, true) => "CuckooQuotientSet<Lazy,16,SIMD,EF>",
+            (Mode::Lazy, 32, false) => "CuckooQuotientSet<Lazy,32,SIMD>",
+            (Mode::Lazy, 32, true) => "CuckooQuotientSet<Lazy,32,SIMD,EF>",
             _ => unreachable!("unsupported prefix width"),
         }
     }
     fn new(&self, keys: &[T]) -> Box<dyn HashSet> {
-        let h = CuckooSet::<MODE, PREFIX, SIMD, EF, FILTER>::new(self.slot_ratio, keys);
+        let h = CuckooSet::<MODE, PREFIX, EF, FILTER>::new(self.slot_ratio, keys);
         Box::new(h)
     }
     fn allocation_size(&self) -> usize {
@@ -768,414 +943,5 @@ impl<const MODE: u8, const PREFIX: usize, const SIMD: bool, const EF: bool, cons
     #[inline(always)]
     fn contains_with_token(&self, key: T, token: usize) -> bool {
         self.contains_with_token(key, token)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn layout<const P: usize>() {
-        assert_eq!(std::mem::size_of::<PackedBin<P, false>>(), 64);
-        assert_eq!(std::mem::align_of::<PackedBin<P, false>>(), 64);
-        for bits in 32..=64 {
-            let slots = 512 / bits;
-            let mask = u64::MAX >> (64 - bits);
-            let mut bin = PackedBin::<P, false>([0; 8]);
-            let values: Vec<_> = (0..slots)
-                .map(|i| {
-                    // Include nonzero entries with an all-zero prefix.
-                    if i == 0 && P < bits {
-                        1u64 << P
-                    } else {
-                        (CuckooSet::<0>::permute(i as u64, false) & mask).max(1)
-                    }
-                })
-                .collect();
-            for (slot, &value) in values.iter().enumerate() {
-                assert!(!bin.full(bits, slots));
-                bin.push(value, bits, slots);
-                for (i, &expected) in values[..=slot].iter().enumerate() {
-                    assert_eq!(bin.get(i, bits, slots), expected);
-                    assert!(bin.contains(expected, bits, slots));
-                    assert!(PackedBin::<P, true>(bin.0).contains(expected, bits, slots));
-                }
-                assert!(!PackedBin::<P, true>(bin.0).contains(0, bits, slots));
-            }
-            assert!(bin.full(bits, slots));
-            for query in (0..1000).map(|x| CuckooSet::<0>::permute(x, true) & mask) {
-                let expected = query != 0 && values.contains(&query);
-                let simd_bin = PackedBin::<P, true>(bin.0);
-                assert_eq!(bin.contains(query, bits, slots), expected);
-                assert_eq!(simd_bin.contains(query, bits, slots), expected);
-                if P != 0 {
-                    assert_eq!(
-                        bin.candidates(query, slots),
-                        simd_bin.candidates(query, slots)
-                    );
-                }
-            }
-            for i in 0..slots {
-                bin.set(i, bits, slots, mask);
-            }
-            for i in 0..slots {
-                assert_eq!(bin.get(i, bits, slots), mask);
-            }
-        }
-    }
-    #[test]
-    fn permutation_is_invertible_over_u64() {
-        for key in [0, 1, KEY_MASK, 1 << (KEY_BITS - 1)]
-            .into_iter()
-            .chain((0..10_000u64).map(|x| x.wrapping_mul(0x9e3779b97f4a7c15) & KEY_MASK))
-        {
-            for secondary in [false, true] {
-                let hash = CuckooSet::<0>::permute(key, secondary);
-                assert_eq!(CuckooSet::<0>::unpermute(hash, secondary), key);
-                assert_eq!(
-                    CuckooSet::<0>::permute(CuckooSet::<0>::unpermute(key, secondary), secondary),
-                    key
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn sequential_keys_have_valid_placements() {
-        let keys: Vec<_> = (1..=20_000).collect();
-        let set = CuckooSet::<1, 32, true>::new(1.05, &keys);
-        assert_eq!(set.len(), keys.len());
-        assert!(keys.into_iter().all(|key| set.contains(key)));
-    }
-
-    #[test]
-    fn fast_range_roundtrips_and_boundaries() {
-        for m in (2usize..=257).chain([
-            1023,
-            1024,
-            1025,
-            (1 << 22) - 1,
-            1 << 22,
-            (1 << 22) + 1,
-            1 << 31,
-        ]) {
-            let mut set = CuckooSet::<0>::new(1.1, &[]);
-            // Encoding/decoding does not access the table: test large bucket
-            // counts and bucket boundaries without allocating giant tables.
-            set.num_bins = m;
-            set.entry_bits = KEY_BITS as usize + 1 - m.ilog2() as usize;
-            set.slots = 512 / set.entry_bits;
-            for secondary in [false, true] {
-                let boundaries = [0usize, 1, m / 2, m - 1].into_iter().flat_map(|idx| {
-                    let first = ((idx as u128) << KEY_BITS).div_ceil(m as u128) as u64;
-                    [
-                        first.saturating_sub(1),
-                        first,
-                        first.saturating_add(1).min(KEY_MASK),
-                    ]
-                });
-                for hash in boundaries
-                    .chain([0, 1, KEY_MASK])
-                    .chain((1..1000).map(|x| CuckooSet::<0>::permute(x, false)))
-                {
-                    let key = CuckooSet::<0>::unpermute(hash, secondary);
-                    let idx = (set.product(key, secondary) >> 64) as usize;
-                    let entry = set.entry(key, secondary);
-                    assert_eq!(set.decode(entry, idx), key, "m={m}, hash={hash}");
-                    assert!((entry as u128) < (1u128 << set.entry_bits));
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn packed_layouts_and_prefix_masks() {
-        layout::<0>();
-        layout::<8>();
-        layout::<16>();
-        layout::<32>();
-    }
-    fn membership<const P: usize, const SIMD: bool, const EF: bool>() {
-        membership_with_filter::<P, SIMD, EF, false>();
-    }
-
-    fn membership_with_filter<
-        const P: usize,
-        const SIMD: bool,
-        const EF: bool,
-        const FILTER: bool,
-    >() {
-        type Expected = std::collections::HashSet<u64>;
-        for n in [0usize, 1, 20, 1000, 20000] {
-            let mut keys: Vec<_> = (1..=n as u64)
-                .map(|x| CuckooSet::<0>::permute(x, false))
-                .collect();
-            keys.extend([KEY_MASK, 1 << (KEY_BITS - 1), KEY_MASK]);
-            let expected: Expected = keys.iter().copied().collect();
-            let mut set = CuckooSet::<0, P, SIMD, EF, FILTER>::new(1.05, &keys);
-            assert!(set.num_bins >= 2);
-            // Force a nonzero key whose primary quotient is zero.
-            let special = (1..set.num_bins)
-                .map(|idx| set.decode(0, idx))
-                .find(|&key| key != 0 && set.entry(key, false) == 0)
-                .expect("nonzero key with a zero primary quotient");
-            assert_ne!(special, 0);
-            assert_eq!(set.entry(special, false), 0);
-            set.insert(special);
-            let mut expected = expected;
-            expected.insert(special);
-            assert_eq!(set.len(), expected.len());
-            assert_eq!(set.iter().collect::<Expected>(), expected);
-            let primary = expected
-                .iter()
-                .filter(|&&key| set.matches(set.bin_idx_1(key), key, false))
-                .count();
-            assert_eq!(
-                set.primary_hit_ratio(),
-                Some(primary as f32 / expected.len() as f32)
-            );
-            for k in expected
-                .iter()
-                .copied()
-                .chain((1..20000).map(|x| CuckooSet::<0>::permute(x, true)))
-                .chain([0, 1 << (KEY_BITS - 1), u64::MAX])
-            {
-                let present = expected.contains(&k);
-                assert_eq!(set.contains_eager(k), present);
-                assert_eq!(set.contains_lazy(k), present);
-                assert_eq!(
-                    set.contains_eager_with_token(k, set.prefetch_both(k)),
-                    present
-                );
-                assert_eq!(
-                    set.contains_lazy_with_token(k, set.prefetch_first(k)),
-                    present
-                );
-            }
-        }
-        let empty = CuckooSet::<1, P, SIMD, EF>::new(1.1, &[]);
-        assert_eq!(empty.len(), 0);
-        assert_eq!(empty.primary_hit_ratio(), None);
-        assert!(!empty.contains(0));
-    }
-    #[test]
-    fn unfiltered() {
-        membership::<0, false, false>();
-    }
-    #[test]
-    fn prefix8_scalar() {
-        membership::<8, false, false>();
-    }
-    #[test]
-    fn prefix8_simd() {
-        membership::<8, true, false>();
-    }
-    #[test]
-    fn prefix16_scalar() {
-        membership::<16, false, false>();
-    }
-    #[test]
-    fn prefix16_simd() {
-        membership::<16, true, false>();
-    }
-    #[test]
-    fn prefix32_scalar() {
-        membership::<32, false, false>();
-    }
-    #[test]
-    fn prefix32_simd() {
-        membership::<32, true, false>();
-    }
-    fn ef_layout<const P: usize>() {
-        for bits in 32..=64 {
-            let (slots, low_bits) = CuckooSet::<0, P, true, true>::bin_layout(bits);
-            let mut bin = PackedBin::<P, false>([0; 8]);
-            let mut expected = Vec::new();
-            let mask = u64::MAX >> (64 - bits);
-            assert!(!bin.full_encoded::<true>(bits, slots, low_bits));
-            for i in 0..slots {
-                // Includes zero low parts and entries sharing their high part.
-                let value = if i == 0 && low_bits < bits {
-                    1 << low_bits
-                } else {
-                    (CuckooSet::<0>::permute((slots - i) as u64, false) & mask).max(1)
-                };
-                bin.push_encoded::<true>(value, bits, slots, low_bits);
-                expected.push(value);
-                expected.sort_unstable();
-                assert_eq!(
-                    bin.bitmap(bits, slots, low_bits).count_ones() as usize,
-                    expected.len()
-                );
-                for (j, &entry) in expected.iter().enumerate() {
-                    assert_eq!(bin.get_encoded::<true>(j, bits, slots, low_bits), entry);
-                    assert!(bin.contains_encoded::<true>(entry, bits, slots, low_bits));
-                    assert!(
-                        PackedBin::<P, true>(bin.0)
-                            .contains_encoded::<true>(entry, bits, slots, low_bits)
-                    );
-                }
-                for j in expected.len()..slots {
-                    assert_eq!(bin.get_encoded::<true>(j, bits, slots, low_bits), 0);
-                }
-                assert!(
-                    !PackedBin::<P, true>(bin.0).contains_encoded::<true>(0, bits, slots, low_bits)
-                );
-            }
-            assert!(bin.full_encoded::<true>(bits, slots, low_bits));
-            for slot in 0..slots {
-                // Replacing a value can move it to another sorted rank.
-                expected[slot] = mask;
-                expected.sort_unstable();
-                bin.set_encoded::<true>(slot, bits, slots, low_bits, mask);
-                for (j, &entry) in expected.iter().enumerate() {
-                    assert_eq!(bin.get_encoded::<true>(j, bits, slots, low_bits), entry);
-                }
-                assert_eq!(
-                    bin.bitmap(bits, slots, low_bits).count_ones() as usize,
-                    slots
-                );
-            }
-            for value in (1..1000).map(|x| (CuckooSet::<0>::permute(x, true) & mask).max(1)) {
-                assert_eq!(
-                    PackedBin::<P, true>(bin.0)
-                        .contains_encoded::<true>(value, bits, slots, low_bits),
-                    expected.contains(&value)
-                );
-                assert_eq!(
-                    bin.contains_encoded::<true>(value, bits, slots, low_bits),
-                    expected.contains(&value)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn elias_fano_bucket_roundtrips_and_replacements() {
-        ef_layout::<0>();
-        ef_layout::<8>();
-        ef_layout::<16>();
-        ef_layout::<32>();
-    }
-
-    #[test]
-    fn elias_fano_increases_bucket_capacity() {
-        assert_eq!(CuckooSet::<0, 16, true, true>::bin_layout(41), (13, 37));
-        assert_eq!(13 * 37 + 16 + 13, 510);
-        let capacity = ((1usize << 26) as f64 / 0.99).ceil() as usize;
-        let (plain_bins, plain_bits, plain_slots, _) = CuckooSet::<0>::table_layout(capacity);
-        let (ef_bins, ef_bits, ef_slots, ef_low) =
-            CuckooSet::<0, 16, true, true>::table_layout(capacity);
-        assert_eq!((plain_bits, plain_slots), (43, 11));
-        assert_eq!((ef_bits, ef_slots, ef_low), (43, 12, 39));
-        assert!(ef_bins < plain_bins);
-    }
-
-    #[test]
-    fn ef_unfiltered() {
-        membership::<0, false, true>();
-    }
-    #[test]
-    fn ef_prefix8_scalar() {
-        membership::<8, false, true>();
-    }
-    #[test]
-    fn ef_prefix8_simd() {
-        membership::<8, true, true>();
-    }
-    #[test]
-    fn ef_prefix16_scalar() {
-        membership::<16, false, true>();
-    }
-    #[test]
-    fn ef_prefix16_simd() {
-        membership::<16, true, true>();
-    }
-    #[test]
-    fn ef_prefix32_scalar() {
-        membership::<32, false, true>();
-    }
-    #[test]
-    fn ef_prefix32_simd() {
-        membership::<32, true, true>();
-    }
-
-    #[test]
-    fn one_hot_prefix16_simd() {
-        membership_with_filter::<16, true, false, true>();
-    }
-
-    #[test]
-    fn one_hot_ef_prefix16_simd() {
-        membership_with_filter::<16, true, true, true>();
-    }
-
-    #[test]
-    fn one_hot_prefix32_simd() {
-        membership_with_filter::<32, true, false, true>();
-    }
-
-    #[test]
-    fn one_hot_ef_prefix32_simd() {
-        membership_with_filter::<32, true, true, true>();
-    }
-
-    #[test]
-    fn one_hot_summary_tracks_secondary_entries() {
-        let keys: Vec<_> = (1..=20_000u64)
-            .map(|x| CuckooSet::<0>::permute(x, false))
-            .collect();
-        let mut set = CuckooSet::<1, 16, true, true, true>::new(1.05, &keys);
-        assert!(set.summary_ready);
-        let mut secondary = 0;
-        for (idx, bin) in set.table.iter().enumerate() {
-            for slot in 0..set.slots {
-                let entry = bin.get_encoded::<true>(slot, set.entry_bits, set.slots, set.low_bits);
-                if entry != 0 && entry & 1 != 0 {
-                    secondary += 1;
-                    let key = set.decode(entry, idx);
-                    let primary = set.bin_idx_1(key);
-                    assert!(set.table[primary].might_spill(CuckooSet::<0>::permute(key, false)));
-                }
-            }
-        }
-        assert!(secondary > 0);
-        let rejected = (20_001..21_001u64)
-            .map(|x| CuckooSet::<0>::permute(x, true))
-            .filter(|&key| !set.contains(key))
-            .filter(|&key| !set.negative_passes_filter(key).unwrap())
-            .count();
-        assert!(rejected > 0);
-        let extra = u64::MAX - 1;
-        set.insert(extra);
-        assert!(set.contains_lazy(extra));
-        assert!(set.table.iter().all(|bin| bin.0[7] == u64::MAX));
-    }
-
-    #[test]
-    #[should_panic(expected = "zero keys are not supported")]
-    fn rejects_zero_keys() {
-        CuckooSet::<0>::new(1.1, &[0]);
-    }
-
-    #[test]
-    fn trait_rebuild_preserves_configuration() {
-        let template = CuckooSet::<1, 8, false>::new(1.1, &[]);
-        let rebuilt = HashSet::new(&template, &[1, 2, 3]);
-        assert_eq!(rebuilt.name(), template.name());
-        for key in [1, 2, 3] {
-            assert!(rebuilt.contains(key));
-        }
-        assert!(!rebuilt.contains(4));
-        let ef = CuckooSet::<1, 16, true, true>::new(1.1, &[]);
-        let rebuilt = HashSet::new(&ef, &[1, 2, 3]);
-        assert_eq!(rebuilt.name(), ef.name());
-        assert!(rebuilt.contains(2));
-        assert!(!rebuilt.contains(4));
-    }
-
-    #[test]
-    #[should_panic(expected = "zero keys are not supported")]
-    fn rejects_zero_key() {
-        CuckooSet::<0>::new(1.1, &[0]);
     }
 }

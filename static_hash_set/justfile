@@ -4,19 +4,19 @@ remote_repo := "~/git/static-hash-sets-bench-v2/static_hash_set"
 
 # Run the local comparison and refresh its plot. Pass --batch to the binary for batch8/16/32.
 bench:
-    cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-hashbrown -- \
+    cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- \
         --queries-per-thread 10000000 --ns "{{sizes}}" --threads 1,12 \
         --only "{{variants}}" > eval/latest.csv
     cd eval && python3 plot.py latest.csv mt --cpu laptop --output latest.html
 
 # Run the cluster benchmarks synchronously, fetch the CSV, and refresh the plot.
 bench-hellman:
-    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.latest-hellman-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,192 --only {{variants}} --quick --queries-per-thread 1000000 > eval/latest-hellman.csv"'
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=hellman --nodes=1 --ntasks=1 --cpus-per-task=192 --exclusive --mem=0 --time=02:00:00 --cpu-freq=2551000:UserSpace --output=eval/.latest-hellman-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-hellman; srun --cpu-freq=2551000:UserSpace cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,192 --only {{variants}} --quick --queries-per-thread 1000000 > eval/latest-hellman.csv"'
     scp ae-new:{{remote_repo}}/eval/latest-hellman.csv eval/latest-hellman.csv
     cd eval && python3 plot.py latest-hellman.csv mt --cpu hellman --output latest-hellman.html
 
 bench-floyd:
-    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=floyd --nodes=1 --ntasks=1 --cpus-per-task=128 --exclusive --mem=0 --time=02:00:00 --output=eval/.latest-floyd-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-floyd; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-hashbrown -- --ns {{sizes}} --threads 1,16,128 --quick --queries-per-thread 1000000 > eval/latest-floyd.csv"'
+    ssh ae-new 'cd {{remote_repo}} && sbatch --wait --partition=floyd --nodes=1 --ntasks=1 --cpus-per-task=128 --exclusive --mem=0 --time=02:00:00 --output=eval/.latest-floyd-%j.log --wrap="export PATH=\$HOME/.cargo/bin:\$PATH; export CARGO_TARGET_DIR=../target-floyd; cargo run --release --bin static_hash_set --no-default-features --features kphf,bench-ptrhash,bench-hashbrown -- --ns {{sizes}} --threads 1,16,128 --only {{variants}} --quick --queries-per-thread 1000000 > eval/latest-floyd.csv"'
     scp ae-new:{{remote_repo}}/eval/latest-floyd.csv eval/latest-floyd.csv
     cd eval && python3 plot.py latest-floyd.csv mt --cpu floyd --output latest-floyd.html
 

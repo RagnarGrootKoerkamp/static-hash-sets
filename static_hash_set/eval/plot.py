@@ -139,6 +139,9 @@ label_color = {
     "CuckooQuotientSet<Eager,16,SIMD>": "navy",
     "CuckooQuotientSet<Lazy,32,SIMD>": "darkgreen",
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot>": "#00A6A6",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v2": "#7B1FA2",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v3": "#E67E00",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v4": "#4169E1",
     "CuckooQuotientSet<Eager,32,SIMD>": "steelblue",
     "CuckooQuotientSet<Lazy,8,SIMD,EF>": "#00FFFF",
     "CuckooQuotientSet<Eager,8,SIMD,EF>": "#0080FF",
@@ -206,6 +209,9 @@ display_name = {
     "CuckooQuotientSet<Eager,16,SIMD>": "Quotient<Eager, 16-bit SIMD>",
     "CuckooQuotientSet<Lazy,32,SIMD>": "Quotient<Lazy, 32-bit SIMD>",
     "CuckooQuotientSet<Lazy,32,SIMD,OneHot>": "Quotient 32 lazy + 1-hot",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v2": "Quotient 32 lazy + 1-hot v2",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v3": "Quotient 32 lazy + 1-hot v3",
+    "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v4": "Quotient 32 lazy + 1-hot v4 (8 slots)",
     "CuckooQuotientSet<Eager,32,SIMD>": "Quotient<Eager, 32-bit SIMD>",
     "CuckooQuotientSet<Lazy,8,SIMD,EF>": "Quotient 8 lazy + EF",
     "CuckooQuotientSet<Eager,8,SIMD,EF>": "Quotient 8 eager + EF",
@@ -321,7 +327,12 @@ def write_interactive_plot(data, name, cpu_name, thread_specs, metric_specs, out
     data = data[~data["h"].str.contains("<Eager", regex=False)]
     data = data[data["h"] != "CuckooSet<Lazy>"]
     quotienting = data["h"].str.startswith("CuckooQuotientSet<")
-    lazy_32_one_hot = data["h"] == "CuckooQuotientSet<Lazy,32,SIMD,OneHot>"
+    lazy_32_one_hot = data["h"].isin([
+        "CuckooQuotientSet<Lazy,32,SIMD,OneHot>",
+        "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v2",
+        "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v3",
+        "CuckooQuotientSet<Lazy,32,SIMD,OneHot> v4",
+    ])
     data = data[~quotienting | lazy_32_one_hot]
     panel_titles = [title for _ in metric_specs for _ in thread_specs for title in titles]
     nrows = len(thread_specs) * len(metric_specs)

@@ -377,7 +377,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 8, true>::new(1. / alpha, keys),
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 8>::new(1. / alpha, keys),
                 ))
             },
             vec![0.99],
@@ -388,7 +388,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8, true>::new(1. / alpha, keys),
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8>::new(1. / alpha, keys),
                 ))
             },
             vec![0.7],
@@ -399,7 +399,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 16, true>::new(1. / alpha, keys),
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 16>::new(1. / alpha, keys),
                 ))
             },
             vec![0.99],
@@ -410,7 +410,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16, true>::new(1. / alpha, keys),
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16>::new(1. / alpha, keys),
                 ))
             },
             vec![0.7],
@@ -421,7 +421,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, false, true>::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, false, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -435,7 +435,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 32, true>::new(1. / alpha, keys),
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 32>::new(1. / alpha, keys),
                 ))
             },
             vec![0.99],
@@ -446,7 +446,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true>::new(1. / alpha, keys),
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32>::new(1. / alpha, keys),
                 ))
             },
             vec![0.9],
@@ -458,7 +458,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 8, true, true>::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 8, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -472,7 +472,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8, true, true>::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 8, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -486,7 +486,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 16, true, true>::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 16, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -500,7 +500,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16, true, true>::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 16, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -514,7 +514,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, true, true>::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -528,7 +528,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 32, true, true>::new(
+                    CuckooQuotientSet::<{ Mode::Eager as u8 }, 32, true>::new(
                         1. / alpha,
                         keys,
                     ),
@@ -542,7 +542,7 @@ fn main() {
                     return None;
                 }
                 Some(Box::new(
-                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true, true>::new(
+                    CuckooQuotientSet::<{ Mode::Lazy as u8 }, 32, true>::new(
                         1. / alpha,
                         keys,
                     ),
