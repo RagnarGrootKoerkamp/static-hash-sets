@@ -10,3 +10,9 @@
 [submodule "ext/engineering-kphf/third_party/engineering-k-perfect-hashing"]
 	path = ext/engineering-kphf/third_party/engineering-k-perfect-hashing
 	url = github:stefanfred/engineering-k-perfect-hashing
+[submodule "ext/tinyptr-sys/third_party/tinyptr"]
+	path = ext/tinyptr-sys/third_party/tinyptr
+	url = github:xilinion/tinyptr
+[submodule "ext/tpht-sys/third_party/tpht"]
+	path = ext/tpht-sys/third_party/tpht
+	url = github:xilinion/tpht
